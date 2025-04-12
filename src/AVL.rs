@@ -6,7 +6,6 @@ type Link = Option<Rc<RefCell<AvlNode>>>;
 
 #[derive(Clone)]
 pub struct Cell {
-    // Placeholder field; update based on your actual `cell.h`
     pub value: i32,
 }
 
@@ -39,10 +38,8 @@ fn get_balance(node: &Rc<RefCell<AvlNode>>) -> i32 {
 fn rotate_right(y: Rc<RefCell<AvlNode>>) -> Rc<RefCell<AvlNode>> {
     let x = y.borrow_mut().left.take().unwrap();
     let t2 = x.borrow_mut().right.take();
-    {
-        let mut y_mut = y.borrow_mut();
-        y_mut.left = t2;
-    }
+
+    y.borrow_mut().left = t2;
     x.borrow_mut().right = Some(y.clone());
 
     y.borrow_mut().height = max(height(&y.borrow().left), height(&y.borrow().right)) + 1;
@@ -53,10 +50,8 @@ fn rotate_right(y: Rc<RefCell<AvlNode>>) -> Rc<RefCell<AvlNode>> {
 fn rotate_left(x: Rc<RefCell<AvlNode>>) -> Rc<RefCell<AvlNode>> {
     let y = x.borrow_mut().right.take().unwrap();
     let t2 = y.borrow_mut().left.take();
-    {
-        let mut x_mut = x.borrow_mut();
-        x_mut.right = t2;
-    }
+
+    x.borrow_mut().right = t2;
     y.borrow_mut().left = Some(x.clone());
 
     x.borrow_mut().height = max(height(&x.borrow().left), height(&x.borrow().right)) + 1;
@@ -73,11 +68,11 @@ fn insert(node: Link, cell: Rc<RefCell<Cell>>) -> Link {
         } else if cell.borrow().value > n_borrow.cell.borrow().value {
             n_borrow.right = insert(n_borrow.right.clone(), cell);
         } else {
-            return Some(n.clone());
+            return Some(n.clone()); // Duplicate values not allowed
         }
 
         n_borrow.height = 1 + max(height(&n_borrow.left), height(&n_borrow.right));
-        drop(n_borrow); // Drop borrow before rotation
+        drop(n_borrow);
 
         let balance = get_balance(&n);
         let node = n.clone();
@@ -138,6 +133,7 @@ fn delete_node(root: Link, value: i32) -> Link {
         } else if value > node_borrow.cell.borrow().value {
             node_borrow.right = delete_node(node_borrow.right.clone(), value);
         } else {
+            // Node to be deleted found
             if node_borrow.left.is_none() || node_borrow.right.is_none() {
                 return node_borrow.left.clone().or(node_borrow.right.clone());
             } else {
@@ -148,25 +144,67 @@ fn delete_node(root: Link, value: i32) -> Link {
         }
 
         node_borrow.height = 1 + max(height(&node_borrow.left), height(&node_borrow.right));
-        drop(node_borrow); // Drop borrow before rotation
+        drop(node_borrow);
 
         let balance = get_balance(&node);
 
         if balance > 1 && get_balance(&node.borrow().left.as_ref().unwrap()) >= 0 {
             return Some(rotate_right(node));
         }
+
         if balance > 1 && get_balance(&node.borrow().left.as_ref().unwrap()) < 0 {
             let left_rotated = rotate_left(node.borrow().left.clone().unwrap());
             node.borrow_mut().left = Some(left_rotated);
             return Some(rotate_right(node));
         }
+
         if balance < -1 && get_balance(&node.borrow().right.as_ref().unwrap()) <= 0 {
             return Some(rotate_left(node));
         }
+
         if balance < -1 && get_balance(&node.borrow().right.as_ref().unwrap()) > 0 {
-            let right_rotated
+            let right_rotated = rotate_right(node.borrow().right.clone().unwrap());
+            node.borrow_mut().right = Some(right_rotated);
+            return Some(rotate_left(node));
         }
-::contentReference[oaicite:3]{index=3}
+
+        Some(node)
+    } else {
+        None
     }
 }
- 
+
+pub struct AvlTree {
+    root: Link,
+}
+
+impl AvlTree {
+    pub fn new() -> Self {
+        AvlTree { root: None }
+    }
+
+    pub fn insert(&mut self, value: i32) {
+        let cell = Rc::new(RefCell::new(Cell { value }));
+        self.root = insert(self.root.take(), cell);
+    }
+
+    pub fn delete(&mut self, value: i32) {
+        self.root = delete_node(self.root.take(), value);
+    }
+
+    pub fn find(&self, value: i32) -> bool {
+        find(&self.root, value).is_some()
+    }
+
+    pub fn inorder(&self) {
+        fn traverse(node: &Link) {
+            if let Some(n) = node {
+                traverse(&n.borrow().left);
+                print!("{} ", n.borrow().cell.borrow().value);
+                traverse(&n.borrow().right);
+            }
+        }
+        traverse(&self.root);
+        println!();
+    }
+}
