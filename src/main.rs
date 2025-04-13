@@ -8,7 +8,7 @@ use regex::Regex;
 use std::time::Instant;
 use crate::cell::{ Cell};
 use crate::avl::{insert, delete_node, find};
-use crate::stack::{push, StackNode, push_dependent, pop_dependent};
+use crate::stack::{push, StackNode, push_dependent, pop_dependent, StackLink};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::SystemTime;
@@ -32,7 +32,7 @@ pub fn create_sheet(sheet: &mut Vec<Vec<CellRef>>) {
         for _ in 0..R {
             let mut row: Vec<CellRef> = Vec::with_capacity(C);
             for _ in 0..C {
-                row.push(Rc::new(RefCell::new(Cell::new(0, "", 0))));
+                row.push(Cell::new(0, "", 0));
             }
             sheet.push(row);
         }
@@ -40,17 +40,17 @@ pub fn create_sheet(sheet: &mut Vec<Vec<CellRef>>) {
 }
 
 
-pub fn add_dependency(c: &mut Cell, dep: CellRef, sheet: &mut Vec<Vec<CellRef>>) {
+pub fn add_dependency(c: &CellRef, dep: &CellRef, sheet: &mut Vec<Vec<CellRef>>) {
     unsafe {
-        c.dependencies = insert(c.dependencies.take(), dep, sheet, C);
+        c.borrow_mut().dependencies = insert(c.borrow_mut().dependencies.take(), dep, sheet, C);
     }
 }
 
-pub fn add_dependent(c: &mut Cell, dep: CellRef) {
+pub fn add_dependent(c: &CellRef, dep: CellRef) {
     push_dependent(c, dep);
 }
 
-pub fn delete_dependencies(cell1: &mut Cell, row: usize, col: usize, sheet: &mut Vec<Vec<CellRef>>) {
+pub fn delete_dependencies(cell1: &CellRef, row: usize, col: usize, sheet: &mut Vec<Vec<CellRef>>) {
     while let Some(dependent_node) = cell1.dependents.take() {
         let mut dependent = dependent_node.cell.borrow_mut();
         dependent.dependencies = delete_node(dependent.dependencies.take(), row, col, sheet, unsafe { C });
@@ -79,15 +79,15 @@ pub fn dfs(
         visited[current_row * unsafe { C } + current_col] = true;
         let mut stack = vec![cur.dependencies.clone()];
         while let Some(Some(node)) = stack.pop() {
-            let dep_cell = &node.cell;
+            let dep_cell = &node.borrow().cell;
             let dep_ptr = dep_cell.as_ptr() as usize - sheet[0][0].as_ptr() as usize;
             let dep_row = dep_ptr / std::mem::size_of::<RefCell<Cell>>() / unsafe { C };
             let dep_col = dep_ptr / std::mem::size_of::<RefCell<Cell>>() % unsafe { C };
             if dfs(dep_cell, target, visited, dep_row, dep_col, sheet) {
                 return true;
             }
-            stack.push(node.left.clone());
-            stack.push(node.right.clone());
+            stack.push(node.borrow().left.clone());
+            stack.push(node.borrow().right.clone());
         }
     }
     false
@@ -126,15 +126,15 @@ pub fn dfs_range(
         let cur = current.borrow();
         let mut stack = vec![cur.dependencies.clone()];
         while let Some(Some(node)) = stack.pop() {
-            let dep_cell = &node.cell;
+            let dep_cell = &node.borrow().cell;
             let dep_ptr = dep_cell.as_ptr() as usize - sheet[0][0].as_ptr() as usize;
             let dep_row = dep_ptr / std::mem::size_of::<RefCell<Cell>>() / unsafe { C };
             let dep_col = dep_ptr / std::mem::size_of::<RefCell<Cell>>() % unsafe { C };
             if dfs_range(dep_cell, visited, row1, col1, row2, col2, dep_row, dep_col, sheet) {
                 return true;
             }
-            stack.push(node.left.clone());
-            stack.push(node.right.clone());
+            stack.push(node.borrow().left.clone());
+            stack.push(node.borrow().right.clone());
         }
     }
     false
@@ -154,7 +154,7 @@ pub fn check_loop_range(
     dfs_range(start, &mut visited, row1, col1, row2, col2, start_row, start_col, sheet)
 }
 
-pub fn topological_sort_util(cell: &CellRef, visited: &mut Vec<bool>, sheet: &Vec<Vec<CellRef>>, stack: &mut Option<Box<StackNode>>) {
+pub fn topological_sort_util(cell: &CellRef, visited: &mut Vec<bool>, sheet: &Vec<Vec<CellRef>>, stack: &mut StackLink) {
     let ptr_offset = cell.as_ptr() as usize - sheet[0][0].as_ptr() as usize;
     let row = ptr_offset / std::mem::size_of::<RefCell<Cell>>() / unsafe { C };
     let col = ptr_offset / std::mem::size_of::<RefCell<Cell>>() % unsafe { C };
@@ -164,15 +164,15 @@ pub fn topological_sort_util(cell: &CellRef, visited: &mut Vec<bool>, sheet: &Ve
         let cell_borrow = cell.borrow();
         let mut deps_stack = vec![cell_borrow.dependencies.clone()];
         while let Some(Some(node)) = deps_stack.pop() {
-            topological_sort_util(&node.cell, visited, sheet, stack);
-            deps_stack.push(node.left.clone());
-            deps_stack.push(node.right.clone());
+            topological_sort_util(&node.borrow().cell, visited, sheet, stack);
+            deps_stack.push(node.borrow().left.clone());
+            deps_stack.push(node.borrow().right.clone());
         }
         push(stack, Rc::clone(cell));
     }
 }
 
-pub fn topological_sort_from_cell(start_cell: &CellRef, sheet: &Vec<Vec<CellRef>>, stack: &mut Option<Box<StackNode>>) {
+pub fn topological_sort_from_cell(start_cell: &CellRef, sheet: &Vec<Vec<CellRef>>, stack: &mut StackLink) {
     let mut visited = vec![false; unsafe { R * C }];
     topological_sort_util(start_cell, &mut visited, sheet, stack);
 }
@@ -453,8 +453,8 @@ fn evaluate_expression(
                     &sheet[row2 as usize][col2 as usize],
                     *row,
                     *col,
-                    row2 as usize,
-                    col2 as usize,
+                    // row2 as usize,
+                    // col2 as usize,
                     sheet,
                 ) {
                     return -4;
@@ -476,17 +476,17 @@ fn evaluate_expression(
 
         // Dependency logic
         if call_value == 1 {
-            let current = &mut sheet[*row][*col];
+            let current = &sheet[*row][*col];
             delete_dependencies(current, *row, *col, sheet);
 
             if col1 >= 0 && row1 >= 0 {
-                add_dependency(&mut sheet[row1 as usize][col1 as usize], current, sheet);
-                add_dependent(current, &mut sheet[row1 as usize][col1 as usize]);
+                add_dependency(&sheet[row1 as usize][col1 as usize], current, sheet);
+                add_dependent(current, sheet[row1 as usize][col1 as usize]);
             }
 
             if col2 >= 0 && row2 >= 0 && (col2 != col1 || row2 != row1) {
-                add_dependency(&mut sheet[row2 as usize][col2 as usize], current, sheet);
-                add_dependent(current, &mut sheet[row2 as usize][col2 as usize]);
+                add_dependency(&sheet[row2 as usize][col2 as usize], current, sheet);
+                add_dependent(current, sheet[row2 as usize][col2 as usize]);
             }
         }
 
@@ -553,7 +553,7 @@ fn evaluate_expression(
             return -1; // Out-of-bounds error
         }
 
-        if check_loop_range(sheet, &sheet[row][col], row1, col1, row2, col2) {
+        if check_loop_range(sheet, &sheet[row as usize][col as usize], row1, col1, row2, col2) {
             return -4; // Circular dependency detected
         }
 
@@ -561,7 +561,7 @@ fn evaluate_expression(
         if func == "SUM" {
             *result = 0;
             if call_value == 1 {
-                delete_dependencies(&sheet[row][col], *row, *col, sheet);
+                delete_dependencies(&sheet[row as usize][col as usize], *row, *col, sheet);
             }
 
             for i in row1..=row2 {
@@ -573,7 +573,7 @@ fn evaluate_expression(
                     *result += cell.val;
                     if call_value == 1 {
                         add_dependency(&sheet[i as usize][j as usize], &sheet[*row as usize][*col as usize], sheet);
-                        add_dependent(&sheet[*row as usize][*col as usize], &sheet[i as usize][j as usize]);
+                        add_dependent(&sheet[*row as usize][*col as usize], sheet[i as usize][j as usize]);
                     }
                 }
             }
@@ -590,8 +590,8 @@ fn evaluate_expression(
             let mut count = 0;
 
             if call_value == 1 {
-                let mut cell = sheet[*row as usize][*col as usize].borrow_mut();
-                delete_dependencies(&mut cell, *row, *col, sheet);
+                //let mut cell = sheet[*row as usize][*col as usize].borrow_mut();
+                delete_dependencies(&sheet[*row as usize][*col as usize], *row, *col, sheet);
             }
 
             for i in row1..=row2 {
@@ -604,7 +604,7 @@ fn evaluate_expression(
                     count += 1;
                     if call_value == 1 {
                         add_dependency(&sheet[i as usize][j as usize], &sheet[*row as usize][*col as usize], sheet);
-                        add_dependent(&sheet[*row as usize][*col as usize], &sheet[i as usize][j as usize]);
+                        add_dependent(&sheet[*row as usize][*col as usize], sheet[i as usize][j as usize]);
                     }
                 }
             }
@@ -628,10 +628,10 @@ fn evaluate_expression(
                 for j in col1..=col2 {
                     if call_value == 1 {
                         add_dependency(&sheet[i as usize][j as usize], &sheet[*row as usize][*col as usize], sheet);
-                        add_dependent(&sheet[*row as usize][*col as usize], &sheet[i as usize][j as usize]);
+                        add_dependent(&sheet[*row as usize][*col as usize], sheet[i as usize][j as usize]);
                     }
 
-                    let cell = sheet[i][j].borrow();
+                    let cell = sheet[i as usize][j as usize].borrow();
                     if cell.status == 1 {
                         count_status += 1;
                     }
@@ -650,19 +650,19 @@ fn evaluate_expression(
         if func == "MIN" {
             *result = i32::MAX;
             if call_value == 1 {
-                delete_dependencies(&sheet[row][col], *row, *col, sheet);
+                delete_dependencies(&sheet[row as usize][col as usize], *row, *col, sheet);
             }
 
             for i in row1..=row2 {
                 for j in col1..=col2 {
-                    let cell = sheet[i][j].borrow();
+                    let cell = sheet[i as usize][j as usize].borrow();
                     if cell.status == 1 {
                         count_status += 1;
                     }
 
                     if call_value == 1 {
-                        add_dependency(&sheet[i][j], &sheet[row][col], sheet);
-                        add_dependent(&sheet[row][col], &sheet[i][j]);
+                        add_dependency(&sheet[i as usize][j as usize], &sheet[row][col], sheet);
+                        add_dependent(&sheet[row as usize][col as usize], &sheet[i][j]);
                     }
 
                     *result = cell.val.min(*result);
@@ -680,19 +680,19 @@ fn evaluate_expression(
             let mut sum = 0;
             let mut count = 0;
             if call_value == 1 {
-                delete_dependencies(&sheet[row][col], *row, *col, sheet);
+                delete_dependencies(&sheet[row as usize][col as usize], *row, *col, sheet);
             }
 
             for i in row1..=row2 {
                 for j in col1..=col2 {
-                    let cell = sheet[i][j].borrow();
+                    let cell = sheet[i as usize][j as usize].borrow();
                     if cell.status == 1 {
                         count_status += 1;
                     }
 
                     if call_value == 1 {
-                        add_dependency(&sheet[i][j], &sheet[row][col], sheet);
-                        add_dependent(&sheet[row][col], &sheet[i][j]);
+                        add_dependency(&sheet[i as usize][j as usize], &sheet[row][col], sheet);
+                        add_dependent(&sheet[row as usize][col as usize], &sheet[i][j]);
                     }
 
                     sum += cell.val;
@@ -705,7 +705,7 @@ fn evaluate_expression(
 
             for i in row1..=row2 {
                 for j in col1..=col2 {
-                    let cell = sheet[i][j].borrow();
+                    let cell = sheet[i as usize][j as usize].borrow();
                     variance += (cell.val - mean).powi(2);
                 }
             }
@@ -770,18 +770,18 @@ fn evaluate_expression(
 
         // Check for errors in the referenced cell
         let mut count_status = 0;
-        if (*sheet)[row1][col1].status == 1 {
+        if (*sheet)[row1][col1].borrow().status == 1 {
             count_status += 1; // Increment count if the referenced cell has an error
         }
 
-        let result_value = (*sheet)[row1][col1].val;
+        let result_value = (*sheet)[row1][col1].borrow().val;
 
         if call_value == 1 {
             // Delete old dependencies and add new ones
             let current = &(*sheet)[*row][*col];
             delete_dependencies(current, *row, *col, sheet);
             add_dependency(&(*sheet)[row1][col1], &(*sheet)[*row][*col], sheet);
-            add_dependent(&(*sheet)[*row][*col], &(*sheet)[row1][col1]);
+            add_dependent(&(*sheet)[*row][*col], (*sheet)[row1][col1]);
         }
 
         // Sleep for the time indicated by the referenced cell's value
@@ -840,7 +840,7 @@ fn evaluate_expression(
             let current = &(*sheet)[*row][*col];
             delete_dependencies(current, *row, *col, sheet);
             add_dependency(&(*sheet)[row1][col1], &(*sheet)[*row][*col], sheet);
-            add_dependent(&(*sheet)[*row][*col], &(*sheet)[row1][col1]);
+            add_dependent(&(*sheet)[*row][*col], (*sheet)[row1][col1]);
         }
 
         // If any dependents have errors, return -2
@@ -912,7 +912,8 @@ pub fn execute_command(input: &str, rows: usize, cols: usize, sheet: &mut Vec<Ve
                 cell.expression = expr.trim().to_string();
                 cell.status = 0;
 
-                let mut stack = topological_sort_from_cell(cell, sheet);
+                let mut stack = None;
+                topological_sort_from_cell(cell, sheet, &mut stack);
                 stack.pop();
 
                 for cell in stack {

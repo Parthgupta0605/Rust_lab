@@ -1,13 +1,14 @@
 use std::cell::RefCell;
 use std::cmp::max;
 use std::rc::Rc;
+use crate::cell::Cell;
 
 pub type Link = Option<Rc<RefCell<AvlNode>>>;
 
-#[derive(Clone)]
-pub struct Cell {
-    pub value: i32,
-}
+// #[derive(Clone)]
+// pub struct Cell {
+//     pub value: i32,
+// }
 
 pub struct AvlNode {
     pub cell: Rc<RefCell<Cell>>,
@@ -63,9 +64,9 @@ pub fn insert(node: Link, cell: Rc<RefCell<Cell>>) -> Link {
     if let Some(n) = node {
         let mut n_borrow = n.borrow_mut();
 
-        if cell.borrow().value < n_borrow.cell.borrow().value {
+        if cell.borrow().val < n_borrow.cell.borrow().val {
             n_borrow.left = insert(n_borrow.left.clone(), cell.clone());
-        } else if cell.borrow().value > n_borrow.cell.borrow().value {
+        } else if cell.borrow().val > n_borrow.cell.borrow().val {
             n_borrow.right = insert(n_borrow.right.clone(), cell.clone());
         } else {
             return Some(n.clone()); // Duplicate values not allowed
@@ -77,18 +78,18 @@ pub fn insert(node: Link, cell: Rc<RefCell<Cell>>) -> Link {
         let balance = get_balance(&n);
         let node = n.clone();
 
-        if balance > 1 && cell.borrow().value < node.borrow().left.as_ref().unwrap().borrow().cell.borrow().value {
+        if balance > 1 && cell.borrow().val < node.borrow().left.as_ref().unwrap().borrow().cell.borrow().val {
             return Some(rotate_right(node));
         }
-        if balance < -1 && cell.borrow().value > node.borrow().right.as_ref().unwrap().borrow().cell.borrow().value {
+        if balance < -1 && cell.borrow().val > node.borrow().right.as_ref().unwrap().borrow().cell.borrow().val {
             return Some(rotate_left(node));
         }
-        if balance > 1 && cell.borrow().value > node.borrow().left.as_ref().unwrap().borrow().cell.borrow().value {
+        if balance > 1 && cell.borrow().val > node.borrow().left.as_ref().unwrap().borrow().cell.borrow().val {
             let left_rotated = rotate_left(node.borrow().left.clone().unwrap());
             node.borrow_mut().left = Some(left_rotated);
             return Some(rotate_right(node));
         }
-        if balance < -1 && cell.borrow().value < node.borrow().right.as_ref().unwrap().borrow().cell.borrow().value {
+        if balance < -1 && cell.borrow().val < node.borrow().right.as_ref().unwrap().borrow().cell.borrow().val {
             let right_rotated = rotate_right(node.borrow().right.clone().unwrap());
             node.borrow_mut().right = Some(right_rotated);
             return Some(rotate_left(node));
@@ -104,9 +105,9 @@ pub fn find(node: &Link, value: i32) -> Link {
     match node {
         Some(n) => {
             let n_borrow = n.borrow();
-            if value == n_borrow.cell.borrow().value {
+            if value == n_borrow.cell.borrow().val {
                 Some(n.clone())
-            } else if value < n_borrow.cell.borrow().value {
+            } else if value < n_borrow.cell.borrow().val {
                 find(&n_borrow.left, value)
             } else {
                 find(&n_borrow.right, value)
@@ -137,9 +138,9 @@ pub fn delete_node(root: Link, value: i32) -> Link {
     if let Some(node) = root {
         let mut node_borrow = node.borrow_mut();
 
-        if value < node_borrow.cell.borrow().value {
+        if value < node_borrow.cell.borrow().val {
             node_borrow.left = delete_node(node_borrow.left.clone(), value);
-        } else if value > node_borrow.cell.borrow().value {
+        } else if value > node_borrow.cell.borrow().val {
             node_borrow.right = delete_node(node_borrow.right.clone(), value);
         } else {
             // Node to be deleted found
@@ -147,7 +148,7 @@ pub fn delete_node(root: Link, value: i32) -> Link {
                 return node_borrow.left.clone().or(node_borrow.right.clone());
             } else {
                 let temp = min_value_node(node_borrow.right.clone().unwrap());
-                let replacement_value = temp.borrow().cell.borrow().value;
+                let replacement_value = temp.borrow().cell.borrow().val;
                 node_borrow.cell = Rc::new(RefCell::new(Cell { value: replacement_value }));
                 node_borrow.right = delete_node(node_borrow.right.clone(), replacement_value);
             }
@@ -184,37 +185,37 @@ pub fn delete_node(root: Link, value: i32) -> Link {
     }
 }
 
-pub struct AvlTree {
-    root: Link,
-}
+// pub struct AvlTree {
+//     root: Link,
+// }
 
-impl AvlTree {
-    pub fn new() -> Self {
-        AvlTree { root: None }
-    }
+// impl AvlTree {
+//     pub fn new() -> Self {
+//         AvlTree { root: None }
+//     }
 
-    pub fn insert(&mut self, value: i32) {
-        let cell = Rc::new(RefCell::new(Cell { value }));
-        self.root = insert(self.root.take(), cell);
-    }
+//     pub fn insert(&mut self, value: i32) {
+//         let cell = Rc::new(RefCell::new(Cell { value }));
+//         self.root = insert(self.root.take(), cell);
+//     }
 
-    pub fn delete(&mut self, value: i32) {
-        self.root = delete_node(self.root.take(), value);
-    }
+//     pub fn delete(&mut self, value: i32) {
+//         self.root = delete_node(self.root.take(), value);
+//     }
 
-    pub fn find(&self, value: i32) -> bool {
-        find(&self.root, value).is_some()
-    }
+//     pub fn find(&self, value: i32) -> bool {
+//         find(&self.root, value).is_some()
+//     }
 
-    pub fn inorder(&self) {
-        fn traverse(node: &Link) {
-            if let Some(n) = node {
-                traverse(&n.borrow().left);
-                print!("{} ", n.borrow().cell.borrow().value);
-                traverse(&n.borrow().right);
-            }
-        }
-        traverse(&self.root);
-        println!();
-    }
-}
+//     pub fn inorder(&self) {
+//         fn traverse(node: &Link) {
+//             if let Some(n) = node {
+//                 traverse(&n.borrow().left);
+//                 print!("{} ", n.borrow().cell.borrow().val);
+//                 traverse(&n.borrow().right);
+//             }
+//         }
+//         traverse(&self.root);
+//         println!();
+//     }
+// }
