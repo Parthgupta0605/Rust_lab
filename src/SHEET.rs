@@ -1,9 +1,11 @@
-mod AVL;
-mod Stack;
-mod Cell;
+extern crate regex
+pub mod avl;
+pub mod stack;
+pub mod cell;
 
+use regex::Regex;
 use std::time::Instant;
-use crate::cell::{push_dependent, pop_dependent, Cell, CellRef};
+use crate::cell::{ Cell};
 use crate::avl::{insert, delete_node, find};
 use crate::stack::{push, StackNode};
 use std::cell::RefCell;
@@ -19,24 +21,23 @@ pub static mut START_ROW: usize = 0;
 pub static mut START_COL: usize = 0;
 pub const MAX_INPUT_LEN: usize = 1000;
 
-type CellRef = std::rc::Rc<std::cell::RefCell<usize>>;
+type CellRef = Rc<RefCell<Cell>>;
 
-pub fn create_sheet(r: usize, c: usize) -> Vec<Vec<CellRef>> {
+pub fn create_sheet(sheet: &mut Vec<Vec<CellRef>>) {
     unsafe {
-        R = r;
-        C = c;
-    }
+        sheet.clear(); // clear any existing content
+        sheet.reserve(R);
 
-    let mut sheet: Vec<Vec<CellRef>> = Vec::with_capacity(r);
-    for _ in 0..r {
-        let mut row: Vec<CellRef> = Vec::with_capacity(c);
-        for _ in 0..c {
-            row.push(Rc::new(RefCell::new(Cell::new())));
+        for _ in 0..R {
+            let mut row: Vec<CellRef> = Vec::with_capacity(C);
+            for _ in 0..C {
+                row.push(Rc::new(RefCell::new(Cell::new())));
+            }
+            sheet.push(row);
         }
-        sheet.push(row);
     }
-    sheet
 }
+
 
 pub fn add_dependency(c: &mut Cell, dep: CellRef, sheet: &mut Vec<Vec<CellRef>>) {
     unsafe {
@@ -96,8 +97,8 @@ pub fn check_loop(
     target: &CellRef,
     start_row: usize,
     start_col: usize,
-    target_row: usize,
-    target_col: usize,
+    // target_row: usize,
+    // target_col: usize,
     sheet: &mut Vec<Vec<CellRef>>,
 ) -> bool {
     let mut visited = vec![false; unsafe { R * C }];
@@ -345,7 +346,7 @@ fn evaluate_expression(
     expr: &str,
     rows: usize,
     cols: usize,
-    sheet: &mut Vec<Vec<Cell>>,
+    sheet: &mut Vec<Vec<RefCell>>,
     result: &mut i32,
     row: &usize,
     col: &usize,
@@ -437,7 +438,7 @@ fn evaluate_expression(
                 return -1;
             }
 
-            if let Some(val) = col_label_to_index(&label1) {
+            if let Some(val) = col_label_to_index(&label2) {
                 col2 = val;
             }
             if let Ok(r) = num2.parse::<i32>() {
@@ -559,13 +560,13 @@ fn evaluate_expression(
 
             for i in row1..=row2 {
                 for j in col1..=col2 {
-                    if sheet[i][j].status == 1 {
+                    if sheet[i as usize][j as usize].status == 1 {
                         count_status += 1;
                     }
-                    *result += sheet[i][j].val;
+                    *result += sheet[i as usize][j as usize].val;
                     if call_value == 1 {
-                        add_dependency(&sheet[i][j], &sheet[row][col], sheet);
-                        add_dependent(&sheet[row][col], &sheet[i][j]);
+                        add_dependency(&sheet[i as usize][j as usize], &sheet[*row as usize][*col as usize], sheet);
+                        add_dependent(&sheet[*row as usize][*col as usize], &sheet[i as usize][j as usize]);
                     }
                 }
             }
@@ -582,19 +583,20 @@ fn evaluate_expression(
             let mut count = 0;
 
             if call_value == 1 {
-                delete_dependencies(&sheet[row][col], *row, *col, sheet);
+                let mut cell = sheet[*row as usize][*col as usize].borrow_mut();
+                delete_dependencies(&mut cell, *row, *col, sheet);
             }
 
             for i in row1..=row2 {
                 for j in col1..=col2 {
-                    if sheet[i][j].status == 1 {
+                    if sheet[i as usize][j as usize].status == 1 {
                         count_status += 1;
                     }
-                    *result += sheet[i][j].val;
+                    *result += sheet[i as usize][j as usize].val;
                     count += 1;
                     if call_value == 1 {
-                        add_dependency(&sheet[i][j], &sheet[row][col], sheet);
-                        add_dependent(&sheet[row][col], &sheet[i][j]);
+                        add_dependency(&sheet[i as usize][j as usize], &sheet[*row as usize][*col as usize], sheet);
+                        add_dependent(&sheet[*row as usize][*col as usize], &sheet[i as usize][j as usize]);
                     }
                 }
             }
@@ -611,14 +613,14 @@ fn evaluate_expression(
         if func == "MAX" {
             *result = i32::MIN;
             if call_value == 1 {
-                delete_dependencies(&sheet[row][col], *row, *col, sheet);
+                delete_dependencies(&sheet[*row as usize][*col as usize], *row, *col, sheet);
             }
 
             for i in row1..=row2 {
                 for j in col1..=col2 {
                     if call_value == 1 {
-                        add_dependency(&sheet[i][j], &sheet[row][col], sheet);
-                        add_dependent(&sheet[row][col], &sheet[i][j]);
+                        add_dependency(&sheet[i as usize][j as usize], &sheet[*row as usize][*col as usize], sheet);
+                        add_dependent(&sheet[*row as usize][*col as usize], &sheet[i as usize][j as usize]);
                     }
 
                     if sheet[i][j].status == 1 {
@@ -665,7 +667,7 @@ fn evaluate_expression(
 
         // Handle STDEV function
         if func == "STDEV" {
-            let mut sum = 0.0;
+            let mut sum = 0;
             let mut count = 0;
             if call_value == 1 {
                 delete_dependencies(&sheet[row][col], *row, *col, sheet);
@@ -688,7 +690,7 @@ fn evaluate_expression(
             }
 
             let mean = sum / count ;
-            let mut variance = 0;
+            let mut variance: i32 = 0;
 
             for i in row1..=row2 {
                 for j in col1..=col2 {
@@ -697,7 +699,7 @@ fn evaluate_expression(
             }
 
             variance /= count ;
-            *result = variance.sqrt();
+            *result = (variance as f64).sqrt() as i32;
 
             if count_status > 0 {
                 return -2; // Error in dependents
@@ -750,7 +752,7 @@ fn evaluate_expression(
         }
 
         // Check for circular dependency
-        if check_loop(&(*sheet)[*row][*col], &(*sheet)[row1][col1], *row, *col, row1, col1, sheet) {
+        if check_loop(&(*sheet)[*row][*col], &(*sheet)[row1][col1], *row, *col, row1) {
             return -4; // Circular dependency detected
         }
 
@@ -808,7 +810,7 @@ fn evaluate_expression(
         }
 
         // Check for circular dependency
-        if check_loop(&(*sheet)[*row][*col], &(*sheet)[row1][col1], *row, *col, row1, col1, sheet) {
+        if check_loop(&(*sheet)[*row][*col], &(*sheet)[row1][col1], *row, *col, row1) {
             return -4; // Circular dependency detected
         }
 
@@ -844,7 +846,7 @@ fn evaluate_expression(
 
 
 
-pub fn execute_command(input: &str, rows: usize, cols: usize, sheet: &mut Vec<Vec<Cell>>) -> i32 {
+pub fn execute_command(input: &str, rows: usize, cols: usize, sheet: &mut Vec<Vec<RefCell>>) -> i32 {
     match input {
         "q" => {
             // Drop all memory (handled automatically in Rust)
@@ -855,12 +857,13 @@ pub fn execute_command(input: &str, rows: usize, cols: usize, sheet: &mut Vec<Ve
         },
         _ => {}
     }
-
+    let col: usize = 0;
+    let row: usize = 0;
     if let Some(captures) = input.strip_prefix("scroll_to ") {
         let (col_label, row_str) = captures.trim().split_at(captures.find(|c: char| c.is_ascii_digit()).unwrap_or(0));
         if row_str.starts_with("0") { return -1; }
-        if let Some(val) = col_label_to_index(&label1) {
-            col = val as i32;
+        if let Some(val) = col_label_to_index(&col_label) {
+            col = val as usize;
         }
         let row: usize = row_str.parse().unwrap_or(0).saturating_sub(1);
 
@@ -903,9 +906,9 @@ pub fn execute_command(input: &str, rows: usize, cols: usize, sheet: &mut Vec<Ve
                     let r = cell.row;
                     let c = cell.col;
                     let mut res = 0;
-                    match evaluate_expression(&cell.expression, rows, cols, sheet, &mut res, r, c, false) {
-                        Ok(()) => { sheet[r][c].val = res; sheet[r][c].status = 0; },
-                        Err(EvalError::DivZero) => sheet[r][c].status = 1,
+                    match evaluate_expression(&cell.expression, rows, cols, sheet, &mut res, r, c, 0) {
+                        1 => { sheet[r][c].val = res; sheet[r][c].status = 0; },
+                        -2 => sheet[r][c].status = 1,
                         _ => {}
                     }
                 }
@@ -920,7 +923,7 @@ pub fn execute_command(input: &str, rows: usize, cols: usize, sheet: &mut Vec<Ve
                     let r = cell.row;
                     let c = cell.col;
                     let mut res = 0;
-                    match evaluate_expression(&cell.expression, rows, cols, sheet, &mut res, r, c, true) {
+                    match evaluate_expression(&cell.expression, rows, cols, sheet, &mut res, r, c, 0) {
                         Ok(()) => { sheet[r][c].val = res; sheet[r][c].status = 0; },
                         Err(EvalError::DivZero) => sheet[r][c].status = 1,
                         _ => {}
