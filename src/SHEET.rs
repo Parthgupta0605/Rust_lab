@@ -1,4 +1,4 @@
-extern crate regex
+extern crate regex;
 pub mod avl;
 pub mod stack;
 pub mod cell;

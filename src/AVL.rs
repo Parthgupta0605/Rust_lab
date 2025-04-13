@@ -59,7 +59,7 @@ fn rotate_left(x: Rc<RefCell<AvlNode>>) -> Rc<RefCell<AvlNode>> {
     y
 }
 
-fn insert(node: Link, cell: Rc<RefCell<Cell>>) -> Link {
+pub fn insert(node: Link, cell: Rc<RefCell<Cell>>) -> Link {
     if let Some(n) = node {
         let mut n_borrow = n.borrow_mut();
 
@@ -100,7 +100,7 @@ fn insert(node: Link, cell: Rc<RefCell<Cell>>) -> Link {
     }
 }
 
-fn find(node: &Link, value: i32) -> Link {
+pub fn find(node: &Link, value: i32) -> Link {
     match node {
         Some(n) => {
             let n_borrow = n.borrow();
@@ -133,7 +133,7 @@ fn min_value_node(node: Rc<RefCell<AvlNode>>) -> Rc<RefCell<AvlNode>> {
     current
 }
 
-fn delete_node(root: Link, value: i32) -> Link {
+pub fn delete_node(root: Link, value: i32) -> Link {
     if let Some(node) = root {
         let mut node_borrow = node.borrow_mut();
 
