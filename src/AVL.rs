@@ -64,9 +64,9 @@ fn insert(node: Link, cell: Rc<RefCell<Cell>>) -> Link {
         let mut n_borrow = n.borrow_mut();
 
         if cell.borrow().value < n_borrow.cell.borrow().value {
-            n_borrow.left = insert(n_borrow.left.clone(), cell);
+            n_borrow.left = insert(n_borrow.left.clone(), cell.clone());
         } else if cell.borrow().value > n_borrow.cell.borrow().value {
-            n_borrow.right = insert(n_borrow.right.clone(), cell);
+            n_borrow.right = insert(n_borrow.right.clone(), cell.clone());
         } else {
             return Some(n.clone()); // Duplicate values not allowed
         }
@@ -118,8 +118,17 @@ fn find(node: &Link, value: i32) -> Link {
 
 fn min_value_node(node: Rc<RefCell<AvlNode>>) -> Rc<RefCell<AvlNode>> {
     let mut current = node;
-    while let Some(left) = current.borrow().left.clone() {
-        current = left;
+    loop {
+        let left = {
+            let curr_borrow = current.borrow();
+            curr_borrow.left.clone()
+        };
+
+        if let Some(left_node) = left {
+            current = left_node;
+        } else {
+            break;
+        }
     }
     current
 }
@@ -138,8 +147,9 @@ fn delete_node(root: Link, value: i32) -> Link {
                 return node_borrow.left.clone().or(node_borrow.right.clone());
             } else {
                 let temp = min_value_node(node_borrow.right.clone().unwrap());
-                node_borrow.cell = temp.borrow().cell.clone();
-                node_borrow.right = delete_node(node_borrow.right.clone(), temp.borrow().cell.borrow().value);
+                let replacement_value = temp.borrow().cell.borrow().value;
+                node_borrow.cell = Rc::new(RefCell::new(Cell { value: replacement_value }));
+                node_borrow.right = delete_node(node_borrow.right.clone(), replacement_value);
             }
         }
 
