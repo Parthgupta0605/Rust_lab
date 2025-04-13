@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::cmp::max;
 use std::rc::Rc;
 
-type Link = Option<Rc<RefCell<AvlNode>>>;
+pub type Link = Option<Rc<RefCell<AvlNode>>>;
 
 #[derive(Clone)]
 pub struct Cell {
