@@ -510,10 +510,11 @@ fn evaluate_expression(
                 *result = value1 / value2;
                 return 0;
             }
+            _ => {
+                return -1; // Invalid operator
+            }
         }
-    } else {
-        return -1
-    }
+    } 
 
     let mut func = String::new(); 
     let mut label1 = String::new();
@@ -549,7 +550,7 @@ fn evaluate_expression(
             return -1; // Out-of-bounds error
         }
 
-        if check_loop_range(sheet, &sheet[row as usize][col as usize], row1, col1, row2, col2) {
+        if check_loop_range(sheet, &sheet[*row as usize][*col as usize], row1, col1, row2, col2) {
             return -4; // Circular dependency detected
         }
 
@@ -557,7 +558,7 @@ fn evaluate_expression(
         if func == "SUM" {
             *result = 0;
             if call_value == 1 {
-                delete_dependencies(&sheet[row as usize][col as usize], *row, *col, sheet);
+                delete_dependencies(&sheet[*row as usize][*col as usize], *row, *col, sheet);
             }
 
             for i in row1..=row2 {
@@ -646,7 +647,7 @@ fn evaluate_expression(
         if func == "MIN" {
             *result = i32::MAX;
             if call_value == 1 {
-                delete_dependencies(&sheet[row as usize][col as usize], *row, *col, sheet);
+                delete_dependencies(&sheet[*row as usize][*col as usize], *row, *col, sheet);
             }
 
             for i in row1..=row2 {
@@ -658,7 +659,7 @@ fn evaluate_expression(
 
                     if call_value == 1 {
                         add_dependency(&sheet[i as usize][j as usize], &sheet[row][col], sheet);
-                        add_dependent(&sheet[row as usize][col as usize], &sheet[i][j]);
+                        add_dependent(&sheet[*row as usize][*col as usize], &sheet[i][j]);
                     }
 
                     *result = cell.val.min(*result);
@@ -676,7 +677,7 @@ fn evaluate_expression(
             let mut sum = 0;
             let mut count = 0;
             if call_value == 1 {
-                delete_dependencies(&sheet[row as usize][col as usize], *row, *col, sheet);
+                delete_dependencies(&sheet[*row as usize][*col as usize], *row, *col, sheet);
             }
 
             for i in row1..=row2 {
@@ -688,7 +689,7 @@ fn evaluate_expression(
 
                     if call_value == 1 {
                         add_dependency(&sheet[i as usize][j as usize], &sheet[row][col], sheet);
-                        add_dependent(&sheet[row as usize][col as usize], &sheet[i][j]);
+                        add_dependent(&sheet[*row as usize][*col as usize], &sheet[i][j]);
                     }
 
                     sum += cell.val;
@@ -874,7 +875,7 @@ pub fn execute_command(input: &str, rows: usize, cols: usize, sheet: &mut Vec<Ve
         if let Some(val) = col_label_to_index(&col_label) {
             col = val as usize;
         }
-        let row: usize = row_str.parse().unwrap_or(0).saturating_sub(1);
+        let row: usize = row_str.parse().unwrap_or(0_usize).saturating_sub(1);
 
         if col >= cols || row >= rows  {
             return -1;
@@ -928,7 +929,8 @@ pub fn execute_command(input: &str, rows: usize, cols: usize, sheet: &mut Vec<Ve
                 sheet[row][col].expression = expr.trim().to_string();
                 sheet[row][col].status = 1;
 
-                let mut stack = topological_sort_from_cell(&sheet[row][col], sheet);
+                let mut stack:stack::StackLink = stack::StackLink::new();
+                stack = topological_sort_from_cell(&sheet[row][col], sheet, stack);
                 for cell in stack {
                     let r = cell.row;
                     let c = cell.col;

@@ -1,19 +1,19 @@
-extern crate regex;
 pub mod avl;
 pub mod stack;
 pub mod cell;
+pub mod sheet;
 
 use sscanf::sscanf;
 use regex::Regex;
-use std::time::Instant;
-use crate::cell::{ Cell};
-use crate::avl::{insert, delete_node, find};
-use crate::stack::{push, StackNode, push_dependent, pop_dependent, StackLink};
+use std::time::{Instant,SystemTime};
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::SystemTime;
 use std::env;
 use std::io::{self, Write};
+
+use crate::cell::{ Cell};
+use crate::avl::{insert, delete_node, find};
+use crate::stack::{push, pop, StackNode, push_dependent, pop_dependent, StackLink};
 
 pub static mut FLAG: i32 = 1;
 pub static mut R: usize = 0;
@@ -514,10 +514,11 @@ fn evaluate_expression(
                 *result = value1 / value2;
                 return 0;
             }
+            _ => {
+                return -1; // Invalid operator
+            }
         }
-    } else {
-        return -1
-    }
+    } 
 
     let mut func = String::new(); 
     let mut label1 = String::new();
@@ -553,7 +554,7 @@ fn evaluate_expression(
             return -1; // Out-of-bounds error
         }
 
-        if check_loop_range(sheet, &sheet[row as usize][col as usize], row1, col1, row2, col2) {
+        if check_loop_range(sheet, &sheet[*row as usize][*col as usize], row1, col1, row2, col2) {
             return -4; // Circular dependency detected
         }
 
@@ -561,7 +562,7 @@ fn evaluate_expression(
         if func == "SUM" {
             *result = 0;
             if call_value == 1 {
-                delete_dependencies(&sheet[row as usize][col as usize], *row, *col, sheet);
+                delete_dependencies(&sheet[*row as usize][*col as usize], *row, *col, sheet);
             }
 
             for i in row1..=row2 {
@@ -650,7 +651,7 @@ fn evaluate_expression(
         if func == "MIN" {
             *result = i32::MAX;
             if call_value == 1 {
-                delete_dependencies(&sheet[row as usize][col as usize], *row, *col, sheet);
+                delete_dependencies(&sheet[*row as usize][*col as usize], *row, *col, sheet);
             }
 
             for i in row1..=row2 {
@@ -662,7 +663,7 @@ fn evaluate_expression(
 
                     if call_value == 1 {
                         add_dependency(&sheet[i as usize][j as usize], &sheet[row][col], sheet);
-                        add_dependent(&sheet[row as usize][col as usize], &sheet[i][j]);
+                        add_dependent(&sheet[*row as usize][*col as usize], &sheet[i][j]);
                     }
 
                     *result = cell.val.min(*result);
@@ -680,7 +681,7 @@ fn evaluate_expression(
             let mut sum = 0;
             let mut count = 0;
             if call_value == 1 {
-                delete_dependencies(&sheet[row as usize][col as usize], *row, *col, sheet);
+                delete_dependencies(&sheet[*row as usize][*col as usize], *row, *col, sheet);
             }
 
             for i in row1..=row2 {
@@ -692,7 +693,7 @@ fn evaluate_expression(
 
                     if call_value == 1 {
                         add_dependency(&sheet[i as usize][j as usize], &sheet[row][col], sheet);
-                        add_dependent(&sheet[row as usize][col as usize], &sheet[i][j]);
+                        add_dependent(&sheet[*row as usize][*col as usize], &sheet[i][j]);
                     }
 
                     sum += cell.val;
@@ -759,12 +760,12 @@ fn evaluate_expression(
         let row1 = row1 - 1; // Convert 1-based index to 0-based
 
         // Validate cell boundaries
-        if col1 < 0 || col1 >= cols || row1 < 0 || row1 >= rows as i32 {
+        if col1 < 0 || col1 >= cols || row1 < 0 || row1 >= rows as usize {
             return -1; // Out-of-bounds error
         }
 
         // Check for circular dependency
-        if check_loop(&(*sheet)[*row][*col], &(*sheet)[row1][col1], *row, *col, row1) {
+        if check_loop(&(*sheet)[*row][*col], &(*sheet)[row1][col1], *row, *col, sheet) {
             return -4; // Circular dependency detected
         }
 
@@ -817,12 +818,12 @@ fn evaluate_expression(
         let row1 = row1 - 1; // Convert 1-based index to 0-based
 
         // Validate cell boundaries
-        if col1 < 0 || col1 >= cols || row1 < 0 || row1 >= rows as i32 {
+        if col1 < 0 || col1 >= cols || row1 < 0 || row1 >= rows as usize {
             return -1; // Out-of-bounds error
         }
 
         // Check for circular dependency
-        if check_loop(&(*sheet)[*row][*col], &(*sheet)[row1][col1], *row, *col, row1) {
+        if check_loop(&(*sheet)[*row][*col], &(*sheet)[row1][col1], *row, *col, sheet) {
             return -4; // Circular dependency detected
         }
 
@@ -878,7 +879,7 @@ pub fn execute_command(input: &str, rows: usize, cols: usize, sheet: &mut Vec<Ve
         if let Some(val) = col_label_to_index(&col_label) {
             col = val as usize;
         }
-        let row: usize = row_str.parse().unwrap_or(0).saturating_sub(1);
+        let row: usize = row_str.parse().unwrap_or(0_usize).saturating_sub(1);
 
         if col >= cols || row >= rows  {
             return -1;
@@ -907,14 +908,14 @@ pub fn execute_command(input: &str, rows: usize, cols: usize, sheet: &mut Vec<Ve
         let mut result = 0;
         match evaluate_expression(expr.trim(), rows, cols, sheet, &mut result, &row, &col, 1) {
             0 | 1 => {
-                let cell = &mut sheet[row][col];
-                cell.val = result;
-                cell.expression = expr.trim().to_string();
-                cell.status = 0;
+                let cell = &sheet[row][col];
+                cell.borrow().val = result;
+                cell.borrow().expression = expr.trim().to_string();
+                cell.borrow().status = 0;
 
                 let mut stack = None;
                 topological_sort_from_cell(cell, sheet, &mut stack);
-                stack.pop();
+                pop(stack);
 
                 for cell in stack {
                     let r = cell.row;
@@ -932,7 +933,8 @@ pub fn execute_command(input: &str, rows: usize, cols: usize, sheet: &mut Vec<Ve
                 sheet[row][col].expression = expr.trim().to_string();
                 sheet[row][col].status = 1;
 
-                let mut stack = topological_sort_from_cell(&sheet[row][col], sheet);
+                let mut stack:stack::StackLink = stack::StackLink::new();
+                stack = topological_sort_from_cell(&sheet[row][col], sheet, stack);
                 for cell in stack {
                     let r = cell.row;
                     let c = cell.col;
