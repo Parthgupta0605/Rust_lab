@@ -1,8 +1,12 @@
 [package]
 name = "Rust_lab"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
-regex = "1"
 sscanf = "0.4"
+regex = "1"
+
+[[bin]]
+name = "Rust_lab"
+path = "src/sheet.rs"

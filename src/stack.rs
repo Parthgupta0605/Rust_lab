@@ -1,9 +1,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::cell::Cell;
+use crate::cell::*;
 
 /// Type alias for shared, mutable reference to a `Cell`
-pub type CellRef = Rc<RefCell<Cell>>;
+// pub type CellRef = Rc<RefCell<Cell>>;
 
 /// Type alias for a link in the stack
 pub type StackLink = Option<Rc<RefCell<StackNode>>>;
