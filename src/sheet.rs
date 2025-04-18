@@ -444,7 +444,7 @@ fn evaluate_expression(
     // Try to parse: general binary expression: <expr1><op><expr2>
     let mut op_index = None;
     let mut operator = '\0';
-
+    // println!("DEBUG1: {}", expr);
     for (i, c) in trimmed_expr.char_indices() {
         if "+-*/".contains(c) {
             op_index = Some(i);
@@ -596,6 +596,8 @@ fn evaluate_expression(
     let mut row1_str = String::new();
     let mut row2_str = String::new();
 
+    // println!("DEBUG2: {}", expr);
+
     let func_regex = Regex::new(r"^([A-Z]{1,9})\(([A-Z]+)(\d+):([A-Z]+)(\d+)\)(.*)$").unwrap();
     if let Some(caps) = func_regex.captures(expr.trim()) {
         func = caps.get(1).unwrap().as_str().to_string();
@@ -604,7 +606,10 @@ fn evaluate_expression(
         label2 = caps.get(4).unwrap().as_str().to_string();
         row2_str = caps.get(5).unwrap().as_str().to_string();
         temp = caps.get(6).map_or(String::new(), |m| m.as_str().to_string());
-    }
+        
+        if(!temp.is_empty()) {
+            return -1; // Invalid format if there's extra content after the number
+        }
         
         if row1_str.starts_with('0') {
             return -1; // Invalid expression
@@ -813,9 +818,8 @@ fn evaluate_expression(
             return 0;
         }
     }
-    else 
-        {return -1;} // Invalid format if there's extra content after the function
-
+}
+    // println!("DEBUG3: {}", expr);
     if let Some(caps) = regex::Regex::new(r"^SLEEP\((\d+)([^\)]*)\)$").unwrap().captures(expr.trim()) {
         let result_value = caps.get(1).unwrap().as_str().parse::<i32>().unwrap_or(-1);
         let temp = caps.get(2).map_or(String::new(), |m| m.as_str().to_string());
@@ -833,7 +837,7 @@ fn evaluate_expression(
         sleep_seconds(result_value.try_into().unwrap_or(0)); 
         return 0;
     }
-
+    // println!("DEBUG4: {}", expr);
     // SLEEP with cell reference parsing
     if let Some(caps) = regex::Regex::new(r"^SLEEP\(([A-Z]+)(\d+)([^\)]*)\)$").unwrap().captures(expr.trim()) {
         let label1 = caps.get(1).unwrap().as_str();
@@ -897,7 +901,7 @@ fn evaluate_expression(
 
         return 0;
     }
-
+    // println!("DEBUG: {}", expr);
     // Handle cell reference parsing (e.g., "A1", "B2", etc.)
     if let Some(caps) = regex::Regex::new(r"^([A-Z]+)(\d+)([^\n]*)$").unwrap().captures(expr.trim()) {
         let label1 = caps.get(1).unwrap().as_str();

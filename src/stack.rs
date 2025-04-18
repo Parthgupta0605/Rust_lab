@@ -30,11 +30,24 @@ pub fn push_dependent(cell: &CellRef, dep: CellRef) {
 
 /// Pop from the dependents stack of a cell
 pub fn pop_dependent(cell: &CellRef) -> Option<CellRef> {
+    // let mut c = cell.borrow_mut();
+    // let top = c.dependents.take()?;
+    // let top_ref = top.borrow();
+    // let next = top_ref.next.clone();
+    // let dep_cell = top_ref.cell.clone();
+    // c.dependents = next;
+    // Some(dep_cell)
     let mut c = cell.borrow_mut();
     let top = c.dependents.take()?;
-    let top_ref = top.borrow();
-    let next = top_ref.next.clone();
-    let dep_cell = top_ref.cell.clone();
+
+    // Narrow scope to drop top_ref before re-using c
+    let (next, dep_cell) = {
+        let top_ref = top.borrow();
+        let next = top_ref.next.clone();
+        let dep_cell = top_ref.cell.clone();
+        (next, dep_cell)
+    };
+
     c.dependents = next;
     Some(dep_cell)
 }
