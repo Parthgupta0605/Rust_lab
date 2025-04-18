@@ -1,19 +1,19 @@
-pub mod avl;
-pub mod stack;
-pub mod cell;
-pub mod sheet;
+mod cell;
+mod stack;
+mod avl;
+
+use crate::cell::*;
+use crate::stack::*;
+use crate::avl::*;
 
 use sscanf::sscanf;
 use regex::Regex;
-use std::time::{Instant,SystemTime};
+use std::time::Instant;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::SystemTime;
 use std::env;
 use std::io::{self, Write};
-
-use crate::cell::{ Cell};
-use crate::avl::{insert, delete_node, find};
-use crate::stack::{push, pop, StackNode, push_dependent, pop_dependent, StackLink};
 
 pub static mut FLAG: i32 = 1;
 pub static mut R: usize = 0;
@@ -42,11 +42,11 @@ pub fn create_sheet(sheet: &mut Vec<Vec<CellRef>>) {
 
 pub fn add_dependency(c: &CellRef, dep: &CellRef, sheet: &mut Vec<Vec<CellRef>>) {
     unsafe {
-        c.borrow_mut().dependencies = insert(c.borrow_mut().dependencies.take(), dep, sheet, C);
+        c.borrow_mut().dependencies = insert(c.borrow_mut().dependencies.take(), dep, sheet);
     }
 }
 
-pub fn add_dependent(c: &CellRef, dep: CellRef) {
+pub fn add_dependent(c: &CellRef, dep: &CellRef) {
     push_dependent(c, dep);
 }
 
@@ -913,15 +913,15 @@ pub fn execute_command(input: &str, rows: usize, cols: usize, sheet: &mut Vec<Ve
                 cell.borrow().expression = expr.trim().to_string();
                 cell.borrow().status = 0;
 
-                let mut stack = None;
+                let mut stack: &mut StackLink = &mut StackLink::new();
                 topological_sort_from_cell(cell, sheet, &mut stack);
                 pop(stack);
 
                 for cell in stack {
-                    let r = cell.row;
-                    let c = cell.col;
+                    let r = cell.borrow().row;
+                    let c = cell.borrow().col;
                     let mut res = 0;
-                    match evaluate_expression(&cell.expression, rows, cols, sheet, &mut res, r, c, 0) {
+                    match evaluate_expression(&cell.borrow().expression, rows, cols, sheet, &mut res, r, c, 0) {
                         1 => { sheet[r][c].borrow().val = res; sheet[r][c].borrow().status = 0; },
                         -2 => sheet[r][c].borrow().status = 1,
                         _ => {}
@@ -930,8 +930,8 @@ pub fn execute_command(input: &str, rows: usize, cols: usize, sheet: &mut Vec<Ve
                 return 0;
             },
             -2 => {
-                sheet[row][col].expression = expr.trim().to_string();
-                sheet[row][col].status = 1;
+                sheet[row][col].borrow().expression = expr.trim().to_string();
+                sheet[row][col].borrow().status = 1;
 
                 let mut stack:stack::StackLink = stack::StackLink::new();
                 stack = topological_sort_from_cell(&sheet[row][col], sheet, stack);

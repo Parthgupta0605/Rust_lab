@@ -91,11 +91,15 @@ pub const MAX_INPUT_LEN: usize = 1000;
 //     }
 // }
 
-pub fn add_dependency(c: CellRef, dep: CellRef, sheet_data: &mut SheetData) {
-    unsafe {
-        c.borrow_mut().dependencies = insert(c.borrow_mut().dependencies.take(), dep.clone(), sheet_data);
+    pub fn add_dependency(c: CellRef, dep: CellRef, sheet_data: &mut SheetData) {
+        // unsafe {
+        //     c.borrow_mut().dependencies = insert(c.borrow_mut().dependencies.take(), dep.clone(), sheet_data);
+        // }
+        let mut cell = c.borrow_mut();
+        let old_deps = cell.dependencies.take(); // take() gives you the inner value and sets it to None
+        let new_deps = insert(old_deps, dep.clone(), sheet_data);
+        cell.dependencies = new_deps;
     }
-}
 
 pub fn add_dependent(c: CellRef, dep: CellRef) {
     push_dependent(&c, dep);
@@ -116,7 +120,7 @@ pub fn dfs(
     visited: &mut Vec<bool>,
     current_row: usize,
     current_col: usize,
-    sheet_data: &mut SheetData,
+    sheet_data: &SheetData,
 ) -> bool {
     let cur = current.borrow();
     if Rc::ptr_eq(current, target) {
@@ -127,7 +131,7 @@ pub fn dfs(
     let target_row = sheet_data.calculate_row_col(target).unwrap_or((0, 0)).0;
     let target_col = sheet_data.calculate_row_col(target).unwrap_or((0, 0)).1;
 
-    if find(cur.dependencies.as_ref(), target_row, target_col, sheet_data).is_some() {
+    if find(&cur.dependencies, target_row, target_col, sheet_data).is_some() {
         return true;
     }
     if !visited[current_row * unsafe { C } + current_col] {
@@ -158,7 +162,7 @@ pub fn check_loop(
     // target_row: usize,
     // target_col: usize,
     // sheet: &mut Vec<Vec<CellRef>>,
-    sheet_data: &mut SheetData,
+    sheet_data: &SheetData,
 ) -> bool {
     let mut visited = vec![false; unsafe { R * C }];
     let result = dfs(start, target, &mut visited, start_row, start_col, sheet_data);
@@ -175,7 +179,7 @@ pub fn dfs_range(
     current_row: usize,
     current_col: usize,
     // sheet: &mut Vec<Vec<CellRef>>,
-    sheet_data: &mut SheetData
+    sheet_data: &SheetData
 ) -> bool {
     if current_row >= row1 && current_row <= row2 && current_col >= col1 && current_col <= col2 {
         return true;
@@ -210,7 +214,7 @@ pub fn check_loop_range(
     start_row: usize,
     start_col: usize,
     // sheet: &mut Vec<Vec<CellRef>>,
-    sheet_data: &mut SheetData,
+    sheet_data: &SheetData,
 ) -> bool {
     let mut visited = vec![false; unsafe { R * C }];
     dfs_range(start, &mut visited, row1, col1, row2, col2, start_row, start_col, sheet_data)
@@ -422,8 +426,8 @@ fn evaluate_expression(
     let mut row1: i32 = 0;
     let mut col2: usize = 0;
     let mut row2: i32 = 0;
-    let mut value1 = 0;
-    let mut value2 = 0;
+    let mut value1 ;
+    let mut value2 ;
 
     let trimmed_expr = expr.trim();
 
@@ -478,7 +482,7 @@ fn evaluate_expression(
                     *col,
                     // row1 as usize,
                     // col1 as usize,
-                    sheet_data,
+                    &*sheet_data,
                 ) {
                     return -4;
                 }
@@ -519,7 +523,7 @@ fn evaluate_expression(
                     *col,
                     // row2 as usize,
                     // col2 as usize,
-                    sheet_data,
+                    &*sheet_data,
                 ) {
                     return -4;
                 }
@@ -540,17 +544,17 @@ fn evaluate_expression(
 
         // Dependency logic
         if call_value == 1 {
-            let current = &(sheet_data.sheet)[*row][*col];
+            let current = (sheet_data.sheet)[*row][*col].clone();
             delete_dependencies(current.clone(), *row, *col, sheet_data);
 
             if col1 >= 0 && row1 >= 0 {
-                add_dependency((sheet_data.sheet)[row1 as usize][col1 as usize], current.clone(), sheet_data);
-                add_dependent(current.clone(), (sheet_data.sheet)[row1 as usize][col1 as usize]);
+                add_dependency((sheet_data.sheet)[row1 as usize][col1 as usize].clone(), current.clone(), sheet_data);
+                add_dependent(current.clone(), (sheet_data.sheet)[row1 as usize][col1 as usize].clone());
             }
 
             if col2 >= 0 && row2 >= 0 && (col2 != col1 || row2 != row1) {
-                add_dependency((sheet_data.sheet)[row2 as usize][col2 as usize], current.clone(), sheet_data);
-                add_dependent(current.clone(), (sheet_data.sheet)[row2 as usize][col2 as usize]);
+                add_dependency((sheet_data.sheet)[row2 as usize][col2 as usize].clone(), current.clone(), sheet_data);
+                add_dependent(current, (sheet_data.sheet)[row2 as usize][col2 as usize].clone());
             }
         }
 
@@ -634,7 +638,7 @@ fn evaluate_expression(
             return -1; // Out-of-bounds error
         }
 
-        if check_loop_range(&(sheet_data.sheet)[*row as usize][*col as usize], row1 as usize, col1, row2 as usize, col2, *row, *col, sheet_data) {
+        if check_loop_range(&(sheet_data.sheet)[*row as usize][*col as usize], row1 as usize, col1, row2 as usize, col2, *row, *col, &*sheet_data) {
             return -4; // Circular dependency detected
         }
 
@@ -642,19 +646,21 @@ fn evaluate_expression(
         if func == "SUM" {
             *result = 0;
             if call_value == 1 {
-                delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize], *row, *col, sheet_data);
+                delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize].clone(), *row, *col, sheet_data);
             }
 
             for i in row1..=row2 {
                 for j in col1..=col2 {
+                    {
                     let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
                     if cell.status == 1 {
                         count_status += 1;
                     }
                     *result += cell.val;
+                }
                     if call_value == 1 {
-                        add_dependency((sheet_data.sheet)[i as usize][j as usize], (sheet_data.sheet)[*row as usize][*col as usize], sheet_data);
-                        add_dependent((sheet_data.sheet)[*row as usize][*col as usize], (sheet_data.sheet)[i as usize][j as usize]);
+                        add_dependency((sheet_data.sheet)[i as usize][j as usize].clone(), (sheet_data.sheet)[*row as usize][*col as usize].clone(), sheet_data);
+                        add_dependent((sheet_data.sheet)[*row as usize][*col as usize].clone(), (sheet_data.sheet)[i as usize][j as usize].clone());
                     }
                 }
             }
@@ -672,20 +678,22 @@ fn evaluate_expression(
 
             if call_value == 1 {
                 //let mut cell = sheet[*row as usize][*col as usize].borrow_mut();
-                delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize], *row, *col, sheet_data);
+                delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize].clone(), *row, *col, sheet_data);
             }
 
             for i in row1..=row2 {
                 for j in col1..=col2 {
-                    let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
+                    {
+                        let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
                     if cell.status == 1 {
                         count_status += 1;
                     }
                     *result += cell.val;
                     count += 1;
+                }
                     if call_value == 1 {
-                        add_dependency((sheet_data.sheet)[i as usize][j as usize], (sheet_data.sheet)[*row as usize][*col as usize], sheet_data);
-                        add_dependent((sheet_data.sheet)[*row as usize][*col as usize], (sheet_data.sheet)[i as usize][j as usize]);
+                        add_dependency((sheet_data.sheet)[i as usize][j as usize].clone(), (sheet_data.sheet)[*row as usize][*col as usize].clone(), sheet_data);
+                        add_dependent((sheet_data.sheet)[*row as usize][*col as usize].clone(), (sheet_data.sheet)[i as usize][j as usize].clone());
                     }
                 }
             }
@@ -702,14 +710,14 @@ fn evaluate_expression(
         if func == "MAX" {
             *result = i32::MIN;
             if call_value == 1 {
-                delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize], *row, *col, sheet_data);
+                delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize].clone(), *row, *col, sheet_data);
             }
 
             for i in row1..=row2 {
                 for j in col1..=col2 {
                     if call_value == 1 {
-                        add_dependency((sheet_data.sheet)[i as usize][j as usize], (sheet_data.sheet)[*row as usize][*col as usize], sheet_data);
-                        add_dependent((sheet_data.sheet)[*row as usize][*col as usize], (sheet_data.sheet)[i as usize][j as usize]);
+                        add_dependency((sheet_data.sheet)[i as usize][j as usize].clone(), (sheet_data.sheet)[*row as usize][*col as usize].clone(), sheet_data);
+                        add_dependent((sheet_data.sheet)[*row as usize][*col as usize].clone(), (sheet_data.sheet)[i as usize][j as usize].clone());
                     }
 
                     let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
@@ -731,22 +739,25 @@ fn evaluate_expression(
         if func == "MIN" {
             *result = i32::MAX;
             if call_value == 1 {
-                delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize], *row, *col, sheet_data);
+                delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize].clone(), *row, *col, sheet_data);
             }
 
             for i in row1..=row2 {
                 for j in col1..=col2 {
-                    let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
+                    {
+                        let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
                     if cell.status == 1 {
                         count_status += 1;
                     }
+                    *result = cell.val.min(*result);
+                }
 
                     if call_value == 1 {
-                        add_dependency((sheet_data.sheet)[i as usize][j as usize], (sheet_data.sheet)[*row as usize][*col as usize], sheet_data);
-                        add_dependent((sheet_data.sheet)[*row as usize][*col as usize], (sheet_data.sheet)[i as usize][j as usize]);
+                        add_dependency((sheet_data.sheet)[i as usize][j as usize].clone(), (sheet_data.sheet)[*row as usize][*col as usize].clone(), sheet_data);
+                        add_dependent((sheet_data.sheet)[*row as usize][*col as usize].clone(), (sheet_data.sheet)[i as usize][j as usize].clone());
                     }
 
-                    *result = cell.val.min(*result);
+                   
                 }
             }
 
@@ -761,23 +772,25 @@ fn evaluate_expression(
             let mut sum = 0;
             let mut count = 0;
             if call_value == 1 {
-                delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize], *row, *col, sheet_data);
+                delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize].clone(), *row, *col, sheet_data);
             }
 
             for i in row1..=row2 {
                 for j in col1..=col2 {
+                    {
                     let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
                     if cell.status == 1 {
                         count_status += 1;
                     }
-
-                    if call_value == 1 {
-                        add_dependency((sheet_data.sheet)[i as usize][j as usize], (sheet_data.sheet)[*row as usize][*col as usize], sheet_data);
-                        add_dependent((sheet_data.sheet)[*row as usize][*col as usize], (sheet_data.sheet)[i as usize][j as usize]);
-                    }
-
                     sum += cell.val;
                     count += 1;
+                }
+                    if call_value == 1 {
+                        add_dependency((sheet_data.sheet)[i as usize][j as usize].clone(), (sheet_data.sheet)[*row as usize][*col as usize].clone(), sheet_data);
+                        add_dependent((sheet_data.sheet)[*row as usize][*col as usize].clone(), (sheet_data.sheet)[i as usize][j as usize].clone());
+                    }
+
+                   
                 }
             }
 
@@ -800,6 +813,8 @@ fn evaluate_expression(
             return 0;
         }
     }
+    else 
+        {return -1;} // Invalid format if there's extra content after the function
 
     if let Some(caps) = regex::Regex::new(r"^SLEEP\((\d+)([^\)]*)\)$").unwrap().captures(expr.trim()) {
         let result_value = caps.get(1).unwrap().as_str().parse::<i32>().unwrap_or(-1);
@@ -846,7 +861,7 @@ fn evaluate_expression(
         }
 
         // Check for circular dependency
-        if check_loop(&(*sheet_data.sheet)[*row][*col], &(*sheet_data.sheet)[row1][col1], *row, *col, sheet_data) {
+        if check_loop(&(*sheet_data.sheet)[*row][*col], &(*sheet_data.sheet)[row1][col1], *row, *col, &*sheet_data) {
             return -4; // Circular dependency detected
         }
 
@@ -860,10 +875,11 @@ fn evaluate_expression(
 
         if call_value == 1 {
             // Delete old dependencies and add new ones
-            let current = &(*(sheet_data.sheet))[*row][*col];
+            let current = (sheet_data.sheet)[*row][*col].clone();
             delete_dependencies(current.clone(), *row, *col, sheet_data);
-            add_dependency((*(sheet_data.sheet))[row1][col1], (*(sheet_data.sheet))[*row][*col], sheet_data);
-            add_dependent((*(sheet_data.sheet))[*row][*col], (*(sheet_data.sheet))[row1][col1]);
+
+            add_dependency((*(sheet_data.sheet))[row1][col1].clone(), (*(sheet_data.sheet))[*row][*col].clone(), sheet_data);
+            add_dependent((*(sheet_data.sheet))[*row][*col].clone(), (*(sheet_data.sheet))[row1][col1].clone());
         }
 
         if result_value < 0 {
@@ -909,7 +925,7 @@ fn evaluate_expression(
         }
 
         // Check for circular dependency
-        if check_loop(&(*(sheet_data.sheet))[*row][*col], &(*(sheet_data.sheet))[row1][col1], *row, *col, sheet_data) {
+        if check_loop(&(*(sheet_data.sheet))[*row][*col], &(*(sheet_data.sheet))[row1][col1], *row, *col, &*sheet_data) {
             return -4; // Circular dependency detected
         }
 
@@ -924,10 +940,11 @@ fn evaluate_expression(
 
         // Update dependencies if needed
         if call_value == 1 {
-            let current = &(*(sheet_data.sheet))[*row][*col];
+            let current = (sheet_data.sheet)[*row][*col].clone();
             delete_dependencies(current.clone(), *row, *col, sheet_data);
-            add_dependency((*(sheet_data.sheet))[row1][col1], (*(sheet_data.sheet))[*row][*col], sheet_data);
-            add_dependent((*(sheet_data.sheet))[*row][*col], (*(sheet_data.sheet))[row1][col1]);
+
+            add_dependency((*(sheet_data.sheet))[row1][col1].clone(), (*(sheet_data.sheet))[*row][*col].clone(), sheet_data);
+            add_dependent((*(sheet_data.sheet))[*row][*col].clone(), (*(sheet_data.sheet))[row1][col1].clone());
         }
 
         // If any dependents have errors, return -2
