@@ -687,6 +687,9 @@ fn evaluate_expression(
         if(!temp.is_empty()) {
             return -1; // Invalid format if there's extra content after the number
         }
+        if (func != "SUM" && func != "AVG" && func != "MAX" && func != "MIN" && func != "STDEV") || (label1.len() > 3 || label2.len() > 3) {
+            return -1; // Invalid function 
+        }
         
         if row1_str.starts_with('0') {
             return -1; // Invalid expression
