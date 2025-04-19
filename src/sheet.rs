@@ -105,12 +105,30 @@ pub fn add_dependent(c: CellRef, dep: CellRef) {
     push_dependent(&c, dep);
 }
 
+// pub fn delete_dependencies(cell1: CellRef, row: usize, col: usize, sheet_data: &mut SheetData) {
+//     while let Some(dependent_node) = cell1.borrow_mut().dependents.take() {
+//         let dependent_ref = dependent_node.borrow();
+//         let mut dependent = dependent_ref.cell.borrow_mut();
+//         dependent.dependencies = delete_node(dependent.dependencies.take(), row, col, sheet_data);
+//         pop_dependent(&cell1);
+//     }
+// }
 pub fn delete_dependencies(cell1: CellRef, row: usize, col: usize, sheet_data: &mut SheetData) {
-    while let Some(dependent_node) = cell1.borrow_mut().dependents.take() {
+    loop {
+        // Move this into a scoped block to release borrow before pop_dependent
+        let dependent_node = {
+            let mut cell_borrow = cell1.borrow_mut();
+            match cell_borrow.dependents.take() {
+                Some(node) => node,
+                None => break, // exit loop if no more dependents
+            }
+        };
+
         let dependent_ref = dependent_node.borrow();
         let mut dependent = dependent_ref.cell.borrow_mut();
         dependent.dependencies = delete_node(dependent.dependencies.take(), row, col, sheet_data);
-        pop_dependent(&cell1);
+
+        pop_dependent(&cell1); // now it's safe to mutably borrow again
     }
 }
 
@@ -430,6 +448,7 @@ fn evaluate_expression(
     let mut value2 ;
 
     let trimmed_expr = expr.trim();
+    println!("trimmed_expr: {}", trimmed_expr);
 
     // Try to parse: just an integer
     if let Ok(val) = trimmed_expr.parse::<i32>() {
@@ -1006,10 +1025,12 @@ pub fn execute_command(input: &str, rows: usize, cols: usize,sheet_data: &mut Sh
     }
 
     if let Some((label, expr)) = input.split_once('=') {
+        println!("label: {}, expr: {}", label, expr);        
         let (row, col) = match label_to_index(label.trim()) {
             Some(rc) => rc,
             None => return -1,
         };
+        println!("label ki row: {}, col: {}", row, col);
         if row >= rows || col >= cols { return -1; }
 
         let mut result = 0;
@@ -1088,7 +1109,7 @@ fn main() {
         C = c;
     }
 
-    let start_time = SystemTime::now();
+
 
     if r < 1 || r > 999 {
         eprintln!("Invalid Input < 1<=R<=999 >");
@@ -1100,6 +1121,7 @@ fn main() {
         std::process::exit(-1);
     }
 
+    let start_time = SystemTime::now();
     let mut sheet_data = SheetData::new(r, c);
     // create_sheet(&mut sheet);
     print_sheet(&(sheet_data.sheet));
@@ -1118,6 +1140,7 @@ fn main() {
         }
 
         input = input.trim_end().to_string();
+        println!("Input: {}", input);
         let start = Instant::now();
 
         let status = unsafe { execute_command(&input, R, C, &mut sheet_data) };
