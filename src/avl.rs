@@ -284,20 +284,20 @@ pub fn delete_node(root: Link, row: usize, col: usize, sheet_data: &SheetData) -
     }
 }
 
-// pub fn inorder_traversal(root: &Link, sheet: &Sheet) {
-//     fn traverse(node: &Link, sheet: &Sheet) {
+// pub fn inorder_traversal(root: &Link, sheet_data: &SheetData) {
+//     fn traverse(node: &Link, sheet_data: &SheetData) {
 //         if let Some(n) = node {
 //             let n_borrow = n.borrow();
-//             traverse(&n_borrow.left, sheet);
+//             traverse(&n_borrow.left, sheet_data);
 
-//             let (r, c) = crate::avl::calculate_row_col(&n_borrow.cell, sheet).unwrap();
+//             let (r, c) = sheet_data.calculate_row_col(&n_borrow.cell).unwrap();
 //             let cell = n_borrow.cell.borrow();
 //             println!("({r}, {c}) = {}", cell.val);
 
-//             traverse(&n_borrow.right, sheet);
+//             traverse(&n_borrow.right, sheet_data);
 //         }
 //     }
-//     traverse(root, sheet);
+//     traverse(root, sheet_data);
 // }
 
 // pub fn find(node: &Link, value: i32) -> Link {

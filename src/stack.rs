@@ -73,3 +73,26 @@ pub fn free_dependents(cell: &CellRef) {
     let mut c = cell.borrow_mut();
     c.dependents = None;
 }
+/// Prints the contents of a StackLink
+pub fn print_stack(stack: &StackLink, name: &str) {
+    let mut current = stack.clone();
+    let mut index = 0;
+
+    println!("Contents of stack '{}':", name);
+
+    while let Some(node) = current {
+        let node_ref = node.borrow();
+        let cell = node_ref.cell.borrow();
+        println!(
+            "  [{}] -> Cell(val: {}, expr: '{}')",
+            index, cell.val, cell.expression
+        );
+        current = node_ref.next.clone();
+        index += 1;
+    }
+
+    if index == 0 {
+        println!("  (Stack is empty)");
+    }
+}
+

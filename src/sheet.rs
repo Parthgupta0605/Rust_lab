@@ -115,6 +115,8 @@ pub fn add_dependent(c: CellRef, dep: CellRef) {
 // }
 pub fn delete_dependencies(cell1: CellRef, row: usize, col: usize, sheet_data: &mut SheetData) {
     loop {
+        let (r,c) = sheet_data.calculate_row_col(&cell1).unwrap_or((0, 0));
+        println!("Deleting dependencies for cell at row: {}, col: {}", r, c);
         // Move this into a scoped block to release borrow before pop_dependent
         let dependent_node = {
             let mut cell_borrow = cell1.borrow_mut();
@@ -127,6 +129,7 @@ pub fn delete_dependencies(cell1: CellRef, row: usize, col: usize, sheet_data: &
         let dependent_ref = dependent_node.borrow();
         let mut dependent = dependent_ref.cell.borrow_mut();
         dependent.dependencies = delete_node(dependent.dependencies.take(), row, col, sheet_data);
+
 
         pop_dependent(&cell1); // now it's safe to mutably borrow again
     }
@@ -238,27 +241,78 @@ pub fn check_loop_range(
     dfs_range(start, &mut visited, row1, col1, row2, col2, start_row, start_col, sheet_data)
 }
 
-pub fn topological_sort_util(cell: &CellRef, visited: &mut Vec<bool>, sheet_data: &SheetData, stack: &mut StackLink) {
-    // let ptr_offset = cell.as_ptr() as usize - sheet[0][0].as_ptr() as usize;
-    // let row = ptr_offset / std::mem::size_of::<RefCell<Cell>>() / unsafe { C };
-    // let col = ptr_offset / std::mem::size_of::<RefCell<Cell>>() % unsafe { C };
-    let row = sheet_data.calculate_row_col(cell).unwrap_or((0,0)).0;
-    let col = sheet_data.calculate_row_col(cell).unwrap_or((0,0)).1;
+pub fn topological_sort_util(
+    cell: &CellRef,
+    visited: &mut Vec<bool>,
+    sheet_data: &SheetData,
+    stack: &mut StackLink,
+) {
+    if let Some((row, col)) = sheet_data.calculate_row_col(cell) {
+        let index = row * unsafe { C } + col;
 
-    if !visited[row * unsafe { C } + col] {
-        visited[row * unsafe { C } + col] = true;
-        let cell_borrow = cell.borrow();
-        let mut deps_stack = vec![cell_borrow.dependencies.clone()];
-        while let Some(Some(node)) = deps_stack.pop() {
-            topological_sort_util(&node.borrow().cell, visited, sheet_data, stack);
-            deps_stack.push(node.borrow().left.clone());
-            deps_stack.push(node.borrow().right.clone());
+        if !visited[index] {
+            visited[index] = true;
+
+            // Clone dependencies to traverse safely
+            let dependencies = cell.borrow().dependencies.clone();
+
+            topological_dfs_traverse(dependencies, visited, sheet_data, stack);
+
+            // After processing dependencies, push the current cell
+            push(stack, Rc::clone(cell));
         }
-        push(stack, Rc::clone(cell));
     }
 }
 
+/// Helper recursive function to traverse AVL dependencies
+fn topological_dfs_traverse(
+    node_link: avl::Link,
+    visited: &mut Vec<bool>,
+    sheet_data: &SheetData,
+    stack: &mut StackLink,
+) {
+    if let Some(node_rc) = node_link {
+        let node = node_rc.borrow();
+
+        // Visit the dependency cell
+        topological_sort_util(&node.cell, visited, sheet_data, stack);
+
+        // Traverse left subtree
+        topological_dfs_traverse(node.left.clone(), visited, sheet_data, stack);
+
+        // Traverse right subtree
+        topological_dfs_traverse(node.right.clone(), visited, sheet_data, stack);
+    }
+}
+
+// pub fn topological_sort_util(cell: &CellRef, visited: &mut Vec<bool>, sheet_data: &SheetData, stack: &mut StackLink) {
+//     // let ptr_offset = cell.as_ptr() as usize - sheet[0][0].as_ptr() as usize;
+//     // let row = ptr_offset / std::mem::size_of::<RefCell<Cell>>() / unsafe { C };
+//     // let col = ptr_offset / std::mem::size_of::<RefCell<Cell>>() % unsafe { C };
+//     println!("Topological sort util for cell");
+//     let row = sheet_data.calculate_row_col(cell).unwrap_or((0,0)).0;
+//     let col = sheet_data.calculate_row_col(cell).unwrap_or((0,0)).1;
+
+//     if !visited[row * unsafe { C } + col] {
+//         visited[row * unsafe { C } + col] = true;
+//         let cell_borrow = cell.borrow();
+//         let mut deps_stack = vec![cell_borrow.dependencies.clone()];
+//         while let Some(Some(node)) = deps_stack.pop() {
+//             // println!("Node: {:?}", node.borrow().cell.borrow().expression);
+//             topological_sort_util(&node.borrow().cell, visited, sheet_data, stack);
+//             if let Some(node_left) = node.borrow().left.clone() {
+//                 topological_sort_util(&node_left.borrow().cell, visited, sheet_data, stack);
+//             }
+//             if let Some(node_right) = node.borrow().right.clone() {
+//                 topological_sort_util(&node_right.borrow().cell, visited, sheet_data, stack);
+//             }
+//         }
+//         push(stack, Rc::clone(cell));
+//     }
+// }
+
 pub fn topological_sort_from_cell(start_cell: &CellRef, sheet_data: &SheetData, stack: &mut StackLink) {
+    println!("Topological sort from cell");
     let mut visited = vec![false; unsafe { R * C }];
     topological_sort_util(start_cell, &mut visited, sheet_data, stack);
 }
@@ -448,12 +502,13 @@ fn evaluate_expression(
     let mut value2 ;
 
     let trimmed_expr = expr.trim();
-    println!("trimmed_expr: {}", trimmed_expr);
+    // println!("trimmed_expr: {}", trimmed_expr);
 
     // Try to parse: just an integer
     if let Ok(val) = trimmed_expr.parse::<i32>() {
         *result = val;
         if call_value == 1 {
+            println!("Inside call_value == 1");
             let current = &(sheet_data.sheet)[*row][*col];
             delete_dependencies(current.clone(), *row, *col, sheet_data);
         }
@@ -560,6 +615,8 @@ fn evaluate_expression(
         } else {
             return -1;
         }
+        println!("value2: {}", value2);
+        println!("call_value: {}", call_value);
 
         // Dependency logic
         if call_value == 1 {
@@ -578,6 +635,7 @@ fn evaluate_expression(
         }
 
         if count_status > 0 {
+            println!("count_status: {}", count_status);
             return -2;
         }
 
@@ -652,8 +710,8 @@ fn evaluate_expression(
         if let Some(val) = col_label_to_index(&label1) {
             col1 = val as usize;
         }
-        if let Some(val) = col_label_to_index(&label1) {
-            col1 = val as usize;
+        if let Some(val) = col_label_to_index(&label2) {
+            col2 = val as usize;
         }
         row1 -= 1;
         row2 -= 1;
@@ -732,11 +790,15 @@ fn evaluate_expression(
 
         // Handle MAX function
         if func == "MAX" {
+            // println!("Inside MAX");
             *result = i32::MIN;
             if call_value == 1 {
                 delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize].clone(), *row, *col, sheet_data);
             }
-
+            // println!("{:?}", row1);
+            // println!("{:?}", row2);
+            // println!("{:?}", col1);
+            // println!("{:?}", col2);
             for i in row1..=row2 {
                 for j in col1..=col2 {
                     if call_value == 1 {
@@ -745,7 +807,10 @@ fn evaluate_expression(
                     }
 
                     let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
+                    // println!("{:?}", cell.status);
                     if cell.status == 1 {
+                        println!("i: {:?}", i);
+                        println!("j: {:?}", j);
                         count_status += 1;
                     }
 
@@ -904,11 +969,11 @@ fn evaluate_expression(
             add_dependency((*(sheet_data.sheet))[row1][col1].clone(), (*(sheet_data.sheet))[*row][*col].clone(), sheet_data);
             add_dependent((*(sheet_data.sheet))[*row][*col].clone(), (*(sheet_data.sheet))[row1][col1].clone());
         }
-
-        if result_value < 0 {
-            *result = result_value;
-            return 0; // Invalid sleep time
-        }
+        *result = result_value;
+        // if result_value < 0 {
+            
+        //     return 0; // Invalid sleep time
+        // }
 
         // Sleep for the time indicated by the referenced cell's value
         sleep_seconds(result_value.try_into().unwrap_or(0));
@@ -1025,12 +1090,12 @@ pub fn execute_command(input: &str, rows: usize, cols: usize,sheet_data: &mut Sh
     }
 
     if let Some((label, expr)) = input.split_once('=') {
-        println!("label: {}, expr: {}", label, expr);        
+        // println!("label: {}, expr: {}", label, expr);        
         let (row, col) = match label_to_index(label.trim()) {
             Some(rc) => rc,
             None => return -1,
         };
-        println!("label ki row: {}, col: {}", row, col);
+        // println!("label ki row: {}, col: {}", row, col);
         if row >= rows || col >= cols { return -1; }
 
         let mut result = 0;
@@ -1043,14 +1108,27 @@ pub fn execute_command(input: &str, rows: usize, cols: usize,sheet_data: &mut Sh
 
                 let mut stack = None;
                 topological_sort_from_cell(cell, sheet_data, &mut stack);
+                
                 pop(&mut stack);
+                print_stack(&stack, "MyStack");
 
-                for stack_node in stack {
-                    let cell = &stack_node.borrow().cell;
-                    if let Some((r, c)) = sheet_data.calculate_row_col(cell) {
+                while let Some(cell) = pop(&mut stack) {
+                    println!("Inside stack_node loop");
+                    // let cell = &stack_node.borrow().cell;
+                    if let Some((r, c)) = sheet_data.calculate_row_col(&cell) {
+                        println!("Row: {}, Col: {}", r, c);
                         let mut res = 0;
-                        match evaluate_expression(&cell.borrow().expression, rows, cols, sheet_data, &mut res, &r, &c, 0) {
-                            1 => { (sheet_data.sheet)[r][c].borrow_mut().val = res; (sheet_data.sheet)[r][c].borrow_mut().status = 0; },
+                        let code = {
+                            let cell_ref = cell.borrow();
+                            evaluate_expression(&cell_ref.expression, rows, cols, sheet_data, &mut res, &r, &c, 0)
+                        }; 
+                        match code {
+                            0|1 => { 
+                                let mut cell_new = (sheet_data.sheet)[r][c].borrow_mut();
+                                println!("res: {}", res);
+                                cell_new.val = res; 
+                                cell_new.status = 0; 
+                            },
                             -2 => (sheet_data.sheet)[r][c].borrow_mut().status = 1,
                             _ => {}
                         }
@@ -1059,11 +1137,13 @@ pub fn execute_command(input: &str, rows: usize, cols: usize,sheet_data: &mut Sh
                 return 0;
             },
             -2 => {
-                (sheet_data.sheet)[row][col].borrow_mut().expression = expr.trim().to_string();
-                (sheet_data.sheet)[row][col].borrow_mut().status = 1;
+                let cell = &(sheet_data.sheet)[row][col];
+                cell.borrow_mut().expression = expr.trim().to_string();
+                cell.borrow_mut().status = 1;
 
                 let mut stack:stack::StackLink = None;
                 topological_sort_from_cell(&(sheet_data.sheet)[row][col], sheet_data,&mut stack);
+                pop(&mut stack);
                 for stack_node in stack {
                     if let Some((r, c)) = sheet_data.calculate_row_col(&stack_node.borrow().cell) {
                     let mut res = 0;
@@ -1140,7 +1220,7 @@ fn main() {
         }
 
         input = input.trim_end().to_string();
-        println!("Input: {}", input);
+        // println!("Input: {}", input);
         let start = Instant::now();
 
         let status = unsafe { execute_command(&input, R, C, &mut sheet_data) };
