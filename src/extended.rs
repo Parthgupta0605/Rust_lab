@@ -38,21 +38,21 @@ impl Cell {
         }
     }
 
-    // fn display(&self) -> String {
-    //     // Truncate if content exceeds cell width
-    //     let content = if self.display_value.len() > self.width {
-    //         self.display_value[0..self.width].to_string()
-    //     } else {
-    //         self.display_value.clone()
-    //     };
+    fn display(&self) -> String {
+        // Truncate if content exceeds cell width
+        let content = if self.display_value.len() > self.width {
+            self.display_value[0..self.width].to_string()
+        } else {
+            self.display_value.clone()
+        };
 
-    //     // Apply alignment
-    //     match self.alignment {
-    //         Alignment::Left => format!("{:<width$}", content, width = self.width),
-    //         Alignment::Right => format!("{:>width$}", content, width = self.width),
-    //         Alignment::Center => format!("{:^width$}", content, width = self.width),
-    //     }
-    // }
+        // Apply alignment
+        match self.alignment {
+            Alignment::Left => format!("{:<width$}", content, width = self.width),
+            Alignment::Right => format!("{:>width$}", content, width = self.width),
+            Alignment::Center => format!("{:^width$}", content, width = self.width),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -192,6 +192,7 @@ impl Spreadsheet {
         let is_locked = self.get_cell(addr).map_or(false, |cell| cell.is_locked);
         
         if !cell_exists {
+            self.status_message = format!("ERROR: CELL {} NOT FOUND", addr.to_string());
             return false;
         }
         
@@ -199,64 +200,253 @@ impl Spreadsheet {
             self.status_message = format!("ERROR: CELL {} LOCKED", addr.to_string());
             return false;
         }
-        
+        // println!("Debug: Updating cell {} with value {}", addr.to_string(), value);
         // Save the old cell for undo (clone it before modifying)
         if let Some(old_cell) = self.get_cell(addr).cloned() {
             // Push to undo stack and clear redo stack
             self.push_undo(addr.clone(), old_cell);
             self.redo_stack.clear();
-            
-            // Now update the cell (we're done with operations that need to borrow self)
-            let cell_clone = self.get_cell(addr).cloned();
-            if let Some(mut cell) = cell_clone {
-                // Handle formula
-                if value.starts_with("=") {
-                    // Validate formula
-                    let formula = &value[1..];
-                    let is_valid_formula = if formula.starts_with("SUM(") || formula.starts_with("MIN(") || formula.starts_with("MAX(") || formula.starts_with("STDEV(") {
-                        if let Some(range_str) = formula.strip_prefix("SUM(").or_else(|| formula.strip_prefix("MIN("))
-                            .or_else(|| formula.strip_prefix("MAX(")).or_else(|| formula.strip_prefix("STDEV("))
-                            .and_then(|s| s.strip_suffix(')')) {
-                            if let Some((start, end)) = self.parse_range(range_str) {
-                                let start_exists = self.get_cell(&start).is_some();
-                                let end_exists = self.get_cell(&end).is_some();
-                                start_exists && end_exists
-                            } else {
-                                false
+
+            let mut is_valid_formula = false;
+            if value.starts_with("=") {
+                // Validate formula
+                let formula = &value[1..];
+                is_valid_formula = if formula.starts_with("SUM(") || formula.starts_with("MIN(") || formula.starts_with("MAX(") || formula.starts_with("STDEV(") {
+                    if let Some(range_str) = formula.strip_prefix("SUM(").or_else(|| formula.strip_prefix("MIN("))
+                        .or_else(|| formula.strip_prefix("MAX(")).or_else(|| formula.strip_prefix("STDEV("))
+                        .and_then(|s| s.strip_suffix(')')) {
+                        if let Some((start, end)) = self.parse_range(range_str) {
+                            
+                            let start_exists = self.get_cell(&start).is_some();
+                            println!("Debug: Start cell {} exists: {}", start.to_string(), start_exists);
+                            let end_exists = self.get_cell(&end).is_some();
+                            if(!(start_exists && end_exists)) {
+                                self.status_message = format!("ERROR: INVALID RANGE {}", range_str);
                             }
+                            start_exists && end_exists
                         } else {
-                            false
-                        }
-                    } else if formula.starts_with("sqrt(") || formula.starts_with("log(") {
-                        if let Some(arg) = formula.strip_prefix("sqrt(").or_else(|| formula.strip_prefix("log("))
-                            .and_then(|s| s.strip_suffix(')')) {
-                            CellAddress::from_str(arg).map_or(false, |addr| self.get_cell(&addr).is_some()) || arg.parse::<f64>().is_ok()
-                        } else {
+                            self.status_message = format!("ERROR: INVALID RANGE {}", range_str);
+
                             false
                         }
                     } else {
+                        self.status_message = format!("ERROR: INVALID RANGE {}", formula);
                         false
-                    };
-
-                    if !is_valid_formula {
-                        self.status_message = format!("ERROR: INVALID FORMULA {}", value);
-                        return false;
                     }
-                    cell.formula = Some(value[1..].to_string());
-                    cell.raw_value = value.to_string();
-                    // For now, just use formula as display value
-                    cell.display_value = value.to_string();
+                } else if formula.starts_with("sqrt(") || formula.starts_with("log(") {
+                    if let Some(arg) = formula.strip_prefix("sqrt(").or_else(|| formula.strip_prefix("log("))
+                        .and_then(|s| s.strip_suffix(')')) {
+                        CellAddress::from_str(arg).map_or(false, |addr| self.get_cell(&addr).is_some()) || arg.parse::<f64>().is_ok()
+                    } else {
+                        self.status_message = format!("ERROR: INVALID ARGUMENT {}", formula);
+                        false
+                    }
                 } else {
+                    self.status_message = format!("ERROR: INVALID FORMULA {}", value);
+                    false
+                };
+            }
+            else {
+                if let Some(mut cell) = self.get_cell_mut(addr) {
                     cell.formula = None;
                     cell.raw_value = value.to_string();
                     cell.display_value = value.to_string();
                 }
                 return true;
             }
+            if is_valid_formula {
+                let formula = &value[1..];
+                // Compute the formula result
+                let result = if formula.starts_with("SUM(") {
+                    let range_str = formula.strip_prefix("SUM(").unwrap().strip_suffix(')').unwrap();
+                    if let Some((start, end)) = self.parse_range(range_str) {
+                        let mut sum = 0.0;
+                        for col in start.col..=end.col {
+                            for row in start.row..=end.row {
+                                let addr = CellAddress::new(col, row);
+                                if let Some(cell) = self.get_cell(&addr) {
+                                    if let Ok(value) = cell.display_value.parse::<f64>() {
+                                        sum += value;
+                                    }
+                                }
+                            }
+                        }
+                        sum
+                    } else {
+                        0.0
+                    }
+                } else if formula.starts_with("MIN(") {
+                    let range_str = formula.strip_prefix("MIN(").unwrap().strip_suffix(')').unwrap();
+                    if let Some((start, end)) = self.parse_range(range_str) {
+                        let mut min = f64::INFINITY;
+                        for col in start.col..=end.col {
+                            for row in start.row..=end.row {
+                                let addr = CellAddress::new(col, row);
+                                if let Some(cell) = self.get_cell(&addr) {
+                                    if let Ok(value) = cell.display_value.parse::<f64>() {
+                                        if value < min {
+                                            min = value;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        min
+                    } else {
+                        0.0
+                    }
+                } else if formula.starts_with("MAX(") {
+                    let range_str = formula.strip_prefix("MAX(").unwrap().strip_suffix(')').unwrap();
+                    if let Some((start, end)) = self.parse_range(range_str) {
+                        let mut max = f64::NEG_INFINITY;
+                        for col in start.col..=end.col {
+                            for row in start.row..=end.row {
+                                let addr = CellAddress::new(col, row);
+                                if let Some(cell) = self.get_cell(&addr) {
+                                    if let Ok(value) = cell.display_value.parse::<f64>() {
+                                        if value > max {
+                                            max = value;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        max
+                    } else {
+                        0.0
+                    }
+                } else if formula.starts_with("STDEV(") {
+                    let range_str = formula.strip_prefix("STDEV(").unwrap().strip_suffix(')').unwrap();
+                    if let Some((start, end)) = self.parse_range(range_str) {
+                        let mut values = Vec::new();
+                        for col in start.col..=end.col {
+                            for row in start.row..=end.row {
+                                let addr = CellAddress::new(col, row);
+                                if let Some(cell) = self.get_cell(&addr) {
+                                    if let Ok(value) = cell.display_value.parse::<f64>() {
+                                        values.push(value);
+                                    }
+                                }
+                            }
+                        }
+                        let mean = values.iter().sum::<f64>() / values.len() as f64;
+                        let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+                        variance.sqrt()
+                    } else {
+                        0.0
+                    }
+                } else if formula.starts_with("sqrt(") {
+                    let arg = formula.strip_prefix("sqrt(").unwrap().strip_suffix(')').unwrap();
+                    if let Ok(value) = arg.parse::<f64>() {
+                        value.sqrt()
+                    } else if let Some(addr) = CellAddress::from_str(arg) {
+                        if let Some(cell) = self.get_cell(&addr) {
+                            if let Ok(value) = cell.display_value.parse::<f64>() {
+                                value.sqrt()
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            0.0
+                        }
+                    } else {
+                        0.0
+                    }
+                } else if formula.starts_with("log(") {
+                    let arg = formula.strip_prefix("log(").unwrap().strip_suffix(')').unwrap();
+                    if let Ok(value) = arg.parse::<f64>() {
+                        value.ln()
+                    } else if let Some(addr) = CellAddress::from_str(arg) {
+                        if let Some(cell) = self.get_cell(&addr) {
+                            if let Ok(value) = cell.display_value.parse::<f64>() {
+                                value.ln()
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            0.0
+                        }
+                    } else {
+                        0.0
+                    }
+                } else {
+                    0.0
+                };
+
+                // Update the cell's display value with the computed result
+                if let Some(mut cell) = self.get_cell_mut(addr) {
+                    cell.display_value = result.to_string();
+                    cell.raw_value = result.to_string();
+                    cell.formula = Some(value[1..].to_string());
+
+                }
+                return true;
+            }
+            else {
+                self.status_message = format!("ERROR: INVALID FORMULA {}", value);
+                return false;
+            }
+            return true;
         }
-        
-        false
+        return false;
     }
+            
+            // Now update the cell (we're done with operations that need to borrow self)
+            
+    //         if let Some(mut cell) = self.get_cell_mut(addr) {
+    //             // Handle formula
+    //             if value.starts_with("=") {
+    //                 // Validate formula
+    //                 let formula = &value[1..];
+    //                 // let is_valid_formula = if formula.starts_with("SUM(") || formula.starts_with("MIN(") || formula.starts_with("MAX(") || formula.starts_with("STDEV(") {
+    //                 //     if let Some(range_str) = formula.strip_prefix("SUM(").or_else(|| formula.strip_prefix("MIN("))
+    //                 //         .or_else(|| formula.strip_prefix("MAX(")).or_else(|| formula.strip_prefix("STDEV("))
+    //                 //         .and_then(|s| s.strip_suffix(')')) {
+    //                 //         if let Some((start, end)) = self.parse_range(range_str) {
+    //                 //             let start_exists = self.get_cell(&start).is_some();
+    //                 //             let end_exists = self.get_cell(&end).is_some();
+    //                 //             start_exists && end_exists
+    //                 //         } else {
+    //                 //             false
+    //                 //         }
+    //                 //     } else {
+    //                 //         false
+    //                 //     }
+    //                 // } else if formula.starts_with("sqrt(") || formula.starts_with("log(") {
+    //                 //     if let Some(arg) = formula.strip_prefix("sqrt(").or_else(|| formula.strip_prefix("log("))
+    //                 //         .and_then(|s| s.strip_suffix(')')) {
+    //                 //         CellAddress::from_str(arg).map_or(false, |addr| self.get_cell(&addr).is_some()) || arg.parse::<f64>().is_ok()
+    //                 //     } else {
+    //                 //         false
+    //                 //     }
+    //                 // } else {
+    //                 //     false
+    //                 // };
+
+    //                 if !is_valid_formula {
+    //                     self.status_message = format!("ERROR: INVALID FORMULA {}", value);
+    //                     return false;
+    //                 }
+                        
+    //                 cell.formula = Some(value[1..].to_string());
+    //                 cell.raw_value = value.to_string();
+    //                 // For now, just use formula as display value
+    //                 cell.display_value = value.to_string();
+    //             } else {
+    //                 // println!("Debug :Updating cell {} with value {}", addr.to_string(), value);
+                    
+    //                 cell.formula = None;
+    //                 cell.raw_value = value.to_string();
+    //                 cell.display_value = value.to_string();
+
+    //                 // println!("Debug: Cell {} updated to {}", addr.to_string(), cell.display_value);
+    //             }
+    //             return true;
+    //         }
+    //     }
+        
+    //     false
+    // }
 
     fn push_undo(&mut self, addr: CellAddress, old_cell: Cell) {
         // Maintain max 3 undo steps
@@ -783,12 +973,13 @@ impl Spreadsheet {
                         // Clone the values to avoid borrowing issues
                         let cursor_clone = self.cursor.clone();
                         let command_buffer_clone = self.command_buffer.clone();
-                        
+                        // println!("Debug: Inserting value {} at {}", command_buffer_clone, cursor_clone.to_string());
                         // Now we can safely call update_cell with the cloned values
+                        self.status_message.clear();
                         self.update_cell(&cursor_clone, &command_buffer_clone);
                         self.mode = Mode::Normal;
                         self.command_buffer.clear();
-                        self.status_message.clear();
+                        
                     },
                     KeyCode::Backspace => {
                         self.command_buffer.pop();
@@ -943,15 +1134,18 @@ impl Spreadsheet {
 
 pub fn run_extended() -> Result<()> {
     // Setup terminal
+
     let args: Vec<String> = env::args().collect();
-    let (rows, cols) = if args.len() >= 4 {  // Changed from 3 to 4 to account for the -vim flag
-        let r = args[2].parse::<usize>().unwrap_or(10);
-        let c = args[3].parse::<usize>().unwrap_or(10);
+    let (rows, cols) = if args.len() == 3 {
+        let r = args[1].parse::<usize>().unwrap_or(10);
+        let c = args[2].parse::<usize>().unwrap_or(10);
         (r, c)
     } else {
-        eprintln!("Usage: {} -vim <rows> <cols>. Defaulting to 10x10.", args[0]);
+        eprintln!("Usage: {} <rows> <cols>. Defaulting to 10x10.", args[0]);
         (10, 10)
     };
+
+
     let mut stdout = stdout();
     terminal::enable_raw_mode()?;
     stdout.execute(terminal::Clear(ClearType::All))?;
