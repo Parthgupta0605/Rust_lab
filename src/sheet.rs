@@ -125,7 +125,7 @@ pub fn delete_dependencies(cell1: CellRef, row: usize, col: usize, sheet_data: &
                 None => break, // exit loop if no more dependents
             }
         };
-
+        println!("{}" ,dependent_node.borrow().cell.borrow().expression);
         let dependent_ref = dependent_node.borrow();
         let mut dependent = dependent_ref.cell.borrow_mut();
         dependent.dependencies = delete_node(dependent.dependencies.take(), row, col, sheet_data);
@@ -520,9 +520,9 @@ fn evaluate_expression(
 ) -> i32 {
     let mut count_status = 0;
     let mut col1: usize = 0;
-    let mut row1: i32 = 0;
+    let mut row1: i32 = -1;
     let mut col2: usize = 0;
-    let mut row2: i32 = 0;
+    let mut row2: i32 = -1;
     let value1;
     let value2;
 
