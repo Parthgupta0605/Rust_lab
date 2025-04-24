@@ -1,7 +1,7 @@
 mod cell;
 mod avl;
 mod stack;
-
+mod extended;
 use crate::cell::*;
 use crate::stack::*;
 use crate::avl::*;
@@ -886,8 +886,8 @@ fn evaluate_expression(
                 }
             }
 
-            let mean = sum / count ;
-            let mut variance: i32 = 0;
+            let mean: i32 = sum / count;
+            let mut variance: f64 = 0.0;
 
             for i in row1..=row2 {
                 for j in col1..=col2 {
@@ -897,7 +897,7 @@ fn evaluate_expression(
             }
 
             variance /= count ;
-            *result = (variance as f64).sqrt() as i32;
+            *result = variance.sqrt().round() as i32;
 
             if count_status > 0 {
                 return -2; // Error in dependents
@@ -1171,6 +1171,15 @@ pub fn execute_command(input: &str, rows: usize, cols: usize,sheet_data: &mut Sh
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+
+    if args.len() > 1 && args[1] == "-vim" {
+        // Call the extended version's main function
+        if let Err(err) = extended::run_extended() {
+            eprintln!("Error in extended mode: {}", err);
+            std::process::exit(-1);
+        }
+        return;
+    }
 
     if args.len() != 3 {
         eprintln!("Usage: {} <No. of rows> <No. of columns>", args[0]);
