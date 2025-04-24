@@ -69,10 +69,10 @@ pub fn pop(stack: &mut StackLink) -> Option<CellRef> {
 }
 
 /// Clears the dependents stack of a cell
-pub fn free_dependents(cell: &CellRef) {
-    let mut c = cell.borrow_mut();
-    c.dependents = None;
-}
+// pub fn free_dependents(cell: &CellRef) {
+//     let mut c = cell.borrow_mut();
+//     c.dependents = None;
+// }
 /// Prints the contents of a StackLink
 pub fn print_stack(stack: &StackLink, name: &str) {
     let mut current = stack.clone();

@@ -6,10 +6,10 @@ use crate::cell::*;
 use crate::stack::*;
 use crate::avl::*;
 
-use sscanf::sscanf;
+// use sscanf::sscanf;
 use regex::Regex;
 use std::time::Instant;
-use std::cell::RefCell;
+// use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::SystemTime;
 use std::env;
@@ -498,8 +498,8 @@ fn evaluate_expression(
     let mut row1: i32 = 0;
     let mut col2: usize = 0;
     let mut row2: i32 = 0;
-    let mut value1 ;
-    let mut value2 ;
+    let  value1 ;
+    let  value2 ;
 
     let trimmed_expr = expr.trim();
     // println!("trimmed_expr: {}", trimmed_expr);
@@ -545,7 +545,7 @@ fn evaluate_expression(
             }
             if let Ok(r) = num1.parse::<i32>() {
                 row1 = r - 1;
-                if col1 < 0 || col1 >= cols  || row1 < 0 || row1 >= rows as i32 {
+                if  col1 >= cols  || row1 < 0 || row1 >= rows as i32 {
                     return -1;
                 }
 
@@ -586,7 +586,7 @@ fn evaluate_expression(
             }
             if let Ok(r) = num2.parse::<i32>() {
                 row2 = r - 1;
-                if col2 < 0 || col2 >= cols  || row2 < 0 || row2 >= rows as i32 {
+                if  col2 >= cols  || row2 < 0 || row2 >= rows as i32 {
                     return -1;
                 }
 
@@ -623,12 +623,12 @@ fn evaluate_expression(
             let current = (sheet_data.sheet)[*row][*col].clone();
             delete_dependencies(current.clone(), *row, *col, sheet_data);
 
-            if col1 >= 0 && row1 >= 0 {
+            if  row1 >= 0 {
                 add_dependency((sheet_data.sheet)[row1 as usize][col1 as usize].clone(), current.clone(), sheet_data);
                 add_dependent(current.clone(), (sheet_data.sheet)[row1 as usize][col1 as usize].clone());
             }
 
-            if col2 >= 0 && row2 >= 0 && (col2 != col1 || row2 != row1) {
+            if  row2 >= 0 && (col2 != col1 || row2 != row1) {
                 add_dependency((sheet_data.sheet)[row2 as usize][col2 as usize].clone(), current.clone(), sheet_data);
                 add_dependent(current, (sheet_data.sheet)[row2 as usize][col2 as usize].clone());
             }
@@ -665,26 +665,26 @@ fn evaluate_expression(
         }
     } 
 
-    let mut func = String::new(); 
-    let mut label1 = String::new();
-    let mut label2 = String::new();
-    let mut temp = String::new();
+    // let mut func = String::new(); 
+    // let mut label1 = String::new();
+    // let mut label2 = String::new();
+    // let mut temp = String::new();
 
-    let mut row1_str = String::new();
-    let mut row2_str = String::new();
+    // let mut row1_str = String::new();
+    // let mut row2_str = String::new();
 
     // println!("DEBUG2: {}", expr);
 
     let func_regex = Regex::new(r"^([A-Z]{1,9})\(([A-Z]+)(\d+):([A-Z]+)(\d+)\)(.*)$").unwrap();
     if let Some(caps) = func_regex.captures(expr.trim()) {
-        func = caps.get(1).unwrap().as_str().to_string();
-        label1 = caps.get(2).unwrap().as_str().to_string();
-        row1_str = caps.get(3).unwrap().as_str().to_string();
-        label2 = caps.get(4).unwrap().as_str().to_string();
-        row2_str = caps.get(5).unwrap().as_str().to_string();
-        temp = caps.get(6).map_or(String::new(), |m| m.as_str().to_string());
+        let func = caps.get(1).unwrap().as_str().to_string();
+        let label1 = caps.get(2).unwrap().as_str().to_string();
+        let row1_str = caps.get(3).unwrap().as_str().to_string();
+        let label2 = caps.get(4).unwrap().as_str().to_string();
+        let row2_str = caps.get(5).unwrap().as_str().to_string();
+        let temp = caps.get(6).map_or(String::new(), |m| m.as_str().to_string());
         
-        if(!temp.is_empty()) {
+        if !temp.is_empty() {
             return -1; // Invalid format if there's extra content after the number
         }
         if (func != "SUM" && func != "AVG" && func != "MAX" && func != "MIN" && func != "STDEV") || (label1.len() > 3 || label2.len() > 3) {
@@ -719,7 +719,7 @@ fn evaluate_expression(
         row1 -= 1;
         row2 -= 1;
 
-        if col1 < 0 || col1 >= cols || row1 < 0 || row1 >= rows as i32 || col2 < 0 || col2 >= cols || row2 < 0 || row2 >= rows as i32 || row2 < row1 || col2 < col1 {
+        if  col1 >= cols || row1 < 0 || row1 >= rows as i32 ||  col2 >= cols || row2 < 0 || row2 >= rows as i32 || row2 < row1 || col2 < col1 {
             return -1; // Out-of-bounds error
         }
 
@@ -947,7 +947,7 @@ fn evaluate_expression(
         let row1 = row1 - 1; // Convert 1-based index to 0-based
 
         // Validate cell boundaries
-        if col1 < 0 || col1 >= cols || row1 < 0 || row1 >= rows as usize {
+        if  col1 >= cols || row1 >= rows as usize {
             return -1; // Out-of-bounds error
         }
 
@@ -1011,7 +1011,7 @@ fn evaluate_expression(
         let row1 = row1 - 1; // Convert 1-based index to 0-based
 
         // Validate cell boundaries
-        if col1 < 0 || col1 >= cols || row1 < 0 || row1 >= rows as usize {
+        if  col1 >= cols || row1 >= rows as usize {
             return -1; // Out-of-bounds error
         }
 
@@ -1066,7 +1066,7 @@ pub fn execute_command(input: &str, rows: usize, cols: usize,sheet_data: &mut Sh
         _ => {}
     }
     let mut col: usize = 0;
-    let mut row: usize = 0;
+    // let mut row: usize = 0;
     if let Some(captures) = input.strip_prefix("scroll_to ") {
         let (col_label, row_str) = captures.trim().split_at(captures.find(|c: char| c.is_ascii_digit()).unwrap_or(0));
         if row_str.starts_with("0") { return -1; }
