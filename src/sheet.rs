@@ -892,11 +892,11 @@ fn evaluate_expression(
             for i in row1..=row2 {
                 for j in col1..=col2 {
                     let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
-                    variance += (cell.val - mean).pow(2);
+                    variance += ((cell.val - mean).pow(2)) as f64;
                 }
             }
 
-            variance /= count ;
+            variance /= count as f64;
             *result = variance.sqrt().round() as i32;
 
             if count_status > 0 {
