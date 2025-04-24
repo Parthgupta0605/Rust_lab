@@ -6,13 +6,17 @@ use crossterm::{
     terminal::{self, ClearType},
     ExecutableCommand,
 };
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque, HashSet};
 use std::fs::File;
 use std::io::{self, stdout, BufReader, BufWriter, Write, Result};
 use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json;
 
+static mut START_ROW: usize = 0;
+static mut START_COL: usize = 0;
+static mut R :usize = 0;
+static mut C :usize = 0;
 // Cell struct to store data and metadata
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Cell {
@@ -33,7 +37,7 @@ impl Cell {
             formula: None,
             is_locked: false,
             alignment: Alignment::Left,
-            width: 8,  // Default width
+            width: 5,  // Default width
             height: 1, // Default height
         }
     }
@@ -100,10 +104,19 @@ impl CellAddress {
         }
     }
 
+    fn col_to_letters(mut col: usize) -> String {
+        let mut label = String::new();
+        col += 1; // shift to 1-based
+        while col > 0 {
+            col -= 1;
+            label.insert(0, (b'A' + (col % 26) as u8) as char);
+            col /= 26;
+        }
+        label
+    }
+    
     fn to_string(&self) -> String {
-        format!("{}{}", 
-                ((self.col as u8) + b'A') as char, 
-                self.row + 1)
+       format!("{}{}", Self::col_to_letters(self.col), self.row + 1)
     }
 }
 
@@ -126,10 +139,12 @@ struct Spreadsheet {
     find_matches: Vec<CellAddress>,
     current_find_match: usize,
     find_query: String,
+    dependents: HashMap<String, HashSet<String>>,  // Maps cell address to cells that depend on it
+    dependencies: HashMap<String, HashSet<String>>,
 }
 
 impl Spreadsheet {
-    fn new(cols: usize, rows: usize) -> Self {
+    fn new(rows: usize, cols: usize) -> Self {
         let mut sheet = Spreadsheet {
             data: HashMap::new(),
             cursor: CellAddress::new(0, 0),
@@ -143,6 +158,8 @@ impl Spreadsheet {
             find_matches: Vec::new(),
             current_find_match: 0,
             find_query: String::new(),
+            dependents: HashMap::new(),
+            dependencies: HashMap::new(),
         };
         
         // Initialize cells
@@ -186,6 +203,237 @@ impl Spreadsheet {
         false
     }
 
+    fn add_dependency(&mut self, dependent: &str, dependency: &str) {
+        // Record that 'dependent' depends on 'dependency'
+        self.dependencies.entry(dependent.to_string())
+            .or_insert_with(HashSet::new)
+            .insert(dependency.to_string());
+        
+        // Record that 'dependency' is depended upon by 'dependent'
+        self.dependents.entry(dependency.to_string())
+            .or_insert_with(HashSet::new)
+            .insert(dependent.to_string());
+
+        println!("DEBUG: Added dependency: {} -> {}", dependent, dependency);
+    }
+
+    fn remove_dependencies(&mut self, cell_addr: &str) {
+        // Remove all dependencies for this cell
+        if let Some(deps) = self.dependencies.remove(cell_addr) {
+            // For each dependency, remove this cell from its dependents
+            for dep in deps {
+                if let Some(dependents) = self.dependents.get_mut(&dep) {
+                    dependents.remove(cell_addr);
+                }
+            }
+        }
+    }
+
+    fn update_dependencies(&mut self, cell_addr: &str, formula: &str) {
+        println!("DEBUG: Removing dependencies for cell {}", cell_addr);
+        // First, remove any existing dependencies
+        self.remove_dependencies(cell_addr);
+        
+        // Extract cell references from the formula
+        // let dependencies = self.extract_dependencies(formula);
+        
+        // Add new dependencies
+        if formula.starts_with('=') {
+
+            let formula = &formula[1..]; // Skip the '=' character
+            println!("DEBUG: Updating dependencies for formula {}", formula);
+            // Handle range formulas like SUM(A1:B2)
+            if formula.contains('(') && formula.contains(')') && formula.contains(':') {
+                println!("DEBUG: Found range in formula");
+                let range_start = formula.find('(').unwrap() + 1;
+                let range_end = formula.find(')').unwrap();
+                if range_start < range_end {
+                    let range_str = &formula[range_start..range_end];
+                    if let Some((start, end)) = self.parse_range(range_str) {
+                        // Add all cells in the range as dependencies
+                        for col in start.col..=end.col {
+                            for row in start.row..=end.row {
+                                let addr = CellAddress::new(col, row).to_string();
+                                // dependencies.push(addr);
+                                self.add_dependency(cell_addr, &addr);
+                            }
+                        }
+                    }
+                }
+            } else if formula.contains('(') && formula.contains(')') {
+                println!("DEBUG: Found function in formula");
+                let func_start = formula.find('(').unwrap() + 1;
+                let func_end = formula.find(')').unwrap();
+                if func_start < func_end {
+                    let cell_ref = &formula[func_start..func_end];
+                    if let Some(addr) = CellAddress::from_str(cell_ref) {
+                        // dependencies.push(addr.to_string());
+                        self.add_dependency(cell_addr, &(addr.to_string()));
+                    }
+                }
+            }
+            // Handle simple cell references
+            else {
+                // Simple regex-like pattern for cell references (e.g., A1, B2)
+                for c in formula.chars() {
+                    if c.is_ascii_alphabetic() {
+                        let col_char = c;
+                        let mut remaining = formula.chars().skip_while(|&ch| ch != col_char).skip(1);
+                        let mut row_str = String::new();
+                        
+                        while let Some(c) = remaining.next() {
+                            if c.is_ascii_digit() {
+                                row_str.push(c);
+                            } else {
+                                break;
+                            }
+                        }
+                        
+                        if !row_str.is_empty() {
+                            if let Some(addr) = CellAddress::from_str(&format!("{}{}", col_char, row_str)) {
+                                // dependencies.push(addr.to_string());
+                                self.add_dependency(cell_addr, &(addr.to_string()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // for dep in dependencies {
+        //     self.add_dependency(cell_addr, &dep);
+        // }
+    }
+
+    // fn extract_dependencies(&self, formula: &str) -> Vec<String> {
+    //     let mut dependencies = Vec::new();
+        
+    //     // Extract cell references from formulas like "=A1+B2"
+    //     if formula.starts_with('=') {
+    //         let formula = &formula[1..]; // Skip the '=' character
+            
+    //         // Handle range formulas like SUM(A1:B2)
+    //         if formula.contains('(') && formula.contains(')') && formula.contains(':') {
+    //             let range_start = formula.find('(').unwrap() + 1;
+    //             let range_end = formula.find(')').unwrap();
+    //             if range_start < range_end {
+    //                 let range_str = &formula[range_start..range_end];
+    //                 if let Some((start, end)) = self.parse_range(range_str) {
+    //                     // Add all cells in the range as dependencies
+    //                     for col in start.col..=end.col {
+    //                         for row in start.row..=end.row {
+    //                             let addr = CellAddress::new(col, row).to_string();
+    //                             dependencies.push(addr);
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         } else if formula.contains('(') && formula.contains(')') {
+    //             let func_start = formula.find('(').unwrap() + 1;
+    //             let func_end = formula.find(')').unwrap();
+    //             if func_start < func_end {
+    //                 let cell_ref = &formula[func_start..func_end];
+    //                 if let Some(addr) = CellAddress::from_str(cell_ref) {
+    //                     dependencies.push(addr.to_string());
+    //                 }
+    //             }
+    //         }
+    //         // Handle simple cell references
+    //         else {
+    //             // Simple regex-like pattern for cell references (e.g., A1, B2)
+    //             for c in formula.chars() {
+    //                 if c.is_ascii_alphabetic() {
+    //                     let col_char = c;
+    //                     let mut remaining = formula.chars().skip_while(|&ch| ch != col_char).skip(1);
+    //                     let mut row_str = String::new();
+                        
+    //                     while let Some(c) = remaining.next() {
+    //                         if c.is_ascii_digit() {
+    //                             row_str.push(c);
+    //                         } else {
+    //                             break;
+    //                         }
+    //                     }
+                        
+    //                     if !row_str.is_empty() {
+    //                         if let Some(addr) = CellAddress::from_str(&format!("{}{}", col_char, row_str)) {
+    //                             dependencies.push(addr.to_string());
+    //                         }
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+        
+    //     dependencies
+    // }
+
+    // fn propagate_changes(&mut self, cell_addr: &str) {
+    //     // Find all cells that depend on this cell
+    //     let dependents = if let Some(deps) = self.dependents.get(cell_addr) {
+    //         deps.clone()
+    //     } else {
+    //         return;
+    //     };
+        
+    //     // For each dependent, recalculate its value
+    //     for dependent in dependents {
+    //         if let Some(cell) = self.data.get(&dependent) {
+    //             if let Some(formula) = &cell.formula {
+    //                 // Clone the formula to avoid borrowing issues
+    //                 let formula_clone = format!("={}", formula);
+    //                 let addr = if let Some(addr) = CellAddress::from_str(&dependent) {
+    //                     addr
+    //                 } else {
+    //                     continue;
+    //                 };
+                    
+    //                 // Update the cell with its formula, which will recalculate its value
+    //                 self.update_cell(&addr, &formula_clone);
+                    
+    //                 // Recursively propagate changes to cells that depend on this one
+    //                 self.propagate_changes(&dependent);
+    //             }
+    //         }
+    //     }
+    // }
+    fn propagate_changes(&mut self, cell_addr: &str) {
+        // Get all cells that depend on this cell
+        let mut dependents_to_process = Vec::new();
+        
+        // First, collect all the dependents without holding a reference to self
+        if let Some(deps) = self.dependents.get(cell_addr) {
+            for dep in deps {
+                dependents_to_process.push(dep.clone());
+            }
+        } else {
+            return;
+        }
+        
+        // Now process each dependent
+        for dependent in dependents_to_process {
+            // Get the formula if it exists
+            let formula_opt = if let Some(cell) = self.data.get(&dependent) {
+                cell.formula.clone()
+            } else {
+                None
+            };
+            
+            // If we have a formula, recalculate the cell
+            if let Some(formula) = formula_opt {
+                let formula_with_eq = format!("={}", formula);
+                
+                if let Some(addr) = CellAddress::from_str(&dependent) {
+                    // Update the cell with its formula to recalculate
+                    self.update_cell(&addr, &formula_with_eq);
+                    
+                    // We don't need to recursively call propagate_changes here
+                    // because update_cell will handle that for us
+                }
+            }
+        }
+    }
+
     fn update_cell(&mut self, addr: &CellAddress, value: &str) -> bool {
         // First, check if cell exists and if it's locked
         let cell_exists = self.get_cell(addr).is_some();
@@ -218,7 +466,7 @@ impl Spreadsheet {
                         if let Some((start, end)) = self.parse_range(range_str) {
                             
                             let start_exists = self.get_cell(&start).is_some();
-                            println!("Debug: Start cell {} exists: {}", start.to_string(), start_exists);
+                            // println!("Debug: Start cell {} exists: {}", start.to_string(), start_exists);
                             let end_exists = self.get_cell(&end).is_some();
                             if(!(start_exists && end_exists)) {
                                 self.status_message = format!("ERROR: INVALID RANGE {}", range_str);
@@ -241,21 +489,40 @@ impl Spreadsheet {
                         self.status_message = format!("ERROR: INVALID ARGUMENT {}", formula);
                         false
                     }
-                } else {
+                } 
+                else if formula.starts_with("(") && formula.ends_with(")") {
+                    let cell_ref = &formula[1..formula.len() - 1];
+                    if let Some(addr) = CellAddress::from_str(cell_ref) {
+                        self.get_cell(&addr).is_some()
+                    } else {
+                        self.status_message = format!("ERROR: INVALID CELL REFERENCE {}", cell_ref);
+                         false
+                    }
+                }
+                else {
                     self.status_message = format!("ERROR: INVALID FORMULA {}", value);
                     false
                 };
             }
             else {
+
+                self.update_dependencies(&addr.to_string(), value);
+
                 if let Some(mut cell) = self.get_cell_mut(addr) {
                     cell.formula = None;
                     cell.raw_value = value.to_string();
                     cell.display_value = value.to_string();
                 }
+                println!("DEBUG: propagating starting on {}", addr.to_string());
+
+                self.propagate_changes(&addr.to_string());
                 return true;
             }
             if is_valid_formula {
                 let formula = &value[1..];
+                // self.remove_dependencies(&addr.to_string());
+                println!("DEBUG: Updating dependencies for cell {}", addr.to_string());
+                self.update_dependencies(&addr.to_string(), value);
                 // Compute the formula result
                 let result = if formula.starts_with("SUM(") {
                     let range_str = formula.strip_prefix("SUM(").unwrap().strip_suffix(')').unwrap();
@@ -369,10 +636,26 @@ impl Spreadsheet {
                     } else {
                         0.0
                     }
-                } else {
+                } else if formula.starts_with("(") && formula.ends_with(")") {
+                    let cell_ref = &formula[1..formula.len() - 1];
+                    if let Some(addr) = CellAddress::from_str(cell_ref) {
+                        if let Some(cell) = self.get_cell(&addr) {
+                            if let Ok(value) = cell.display_value.parse::<f64>() {
+                                value
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            0.0
+                        }
+                    } else {
+                        0.0
+                    }
+                    
+                }
+                else {
                     0.0
                 };
-
                 // Update the cell's display value with the computed result
                 if let Some(mut cell) = self.get_cell_mut(addr) {
                     cell.display_value = result.to_string();
@@ -380,9 +663,11 @@ impl Spreadsheet {
                     cell.formula = Some(value[1..].to_string());
 
                 }
+                self.propagate_changes(&addr.to_string());
                 return true;
             }
             else {
+
                 self.status_message = format!("ERROR: INVALID FORMULA {}", value);
                 return false;
             }
@@ -910,7 +1195,7 @@ impl Spreadsheet {
                 if let Err(e) = self.save_json(Path::new(parts[1])) {
                     self.status_message = format!("SAVE ERROR: {}", e);
                 } else {
-                    self.status_message = "FILE SAVED".to_string();
+                    self.status_message = format!("FILE SAVED TO {}", parts[1]);
                 }
             } else {
                 self.status_message = "INVALID SAVE COMMAND".to_string();
@@ -955,6 +1240,34 @@ impl Spreadsheet {
                     KeyCode::Char('j') => self.move_cursor(0, 1),
                     KeyCode::Char('k') => self.move_cursor(0, -1),
                     KeyCode::Char('l') => self.move_cursor(1, 0),
+                    KeyCode::Char('w') => unsafe {
+                        if START_ROW >= 10 {
+                            START_ROW -= 10;
+                        } else {
+                            START_ROW = 0;
+                        }
+                    },
+                    KeyCode::Char('d') => unsafe {
+                        if START_COL + 20 <= unsafe {C} - 1 {
+                            START_COL += 10;
+                        } else {
+                            START_COL = unsafe { C }.saturating_sub(10);
+                        }
+                    },
+                    KeyCode::Char('a') => unsafe {
+                        if START_COL >= 10 {
+                            START_COL -= 10;
+                        } else {
+                            START_COL = 0;
+                        }
+                    },
+                    KeyCode::Char('s') => unsafe {
+                        if START_ROW + 20 <= unsafe {R} - 1 {
+                            START_ROW += 10;
+                        } else {
+                            START_ROW = unsafe {R}.saturating_sub(10);
+                        }
+                    },
                     KeyCode::Char(':') => {
                         self.mode = Mode::Command;
                         self.command_buffer.clear();
@@ -1050,8 +1363,8 @@ impl Spreadsheet {
         write!(stdout, "{:<width$}", "", width = row_label_width+1)?;
         
         // Column headers (A, B, C, etc.)
-        for col in 0..self.max_cols {
-            let col_letter = (b'A' + col as u8) as char;
+        for col in unsafe { START_COL..(START_COL + 10) } {
+            let col_letter = CellAddress::col_to_letters(col);
             write!(stdout, "{:^width$}", col_letter, width = total_cell_width)?;
         }
 
@@ -1059,14 +1372,14 @@ impl Spreadsheet {
 
         
         // Draw grid rows
-        for row in 0..self.max_rows {
+        for row in unsafe { START_ROW..(START_ROW + 10) } {
             // Row label - always in a fixed-width column
             stdout.execute(SetForegroundColor(Color::Cyan))?;
             write!(stdout, "{:>width$}", row + 1, width = row_label_width)?;
             stdout.execute(SetForegroundColor(Color::Reset))?;
             
             // Draw each cell in the row
-            for col in 0..self.max_cols {
+            for col in unsafe {START_COL..(START_COL + 10)} {
                 let addr = CellAddress::new(col, row);
                 let is_cursor_cell = col == self.cursor.col && row == self.cursor.row;
                 
@@ -1124,6 +1437,13 @@ impl Spreadsheet {
             stdout.execute(cursor::MoveTo(cols.saturating_sub(status_message.len() as u16), rows.saturating_sub(1)))?;
             write!(stdout, "{}", status_message)?;
         }
+        // Display command buffer at the bottom right
+        if !self.command_buffer.is_empty() {
+            let command_buffer = &self.command_buffer;
+            stdout.execute(cursor::MoveTo(0, rows.saturating_sub(2)))?;
+            write!(stdout, "{}", command_buffer)?;
+        }
+        
 
         // Rest of the status display code remains unchanged
         stdout.flush()?;
@@ -1145,7 +1465,10 @@ pub fn run_extended() -> Result<()> {
         (10, 10)
     };
 
-
+    unsafe {
+        R = rows;
+        C = cols;
+    }
     let mut stdout = stdout();
     terminal::enable_raw_mode()?;
     stdout.execute(terminal::Clear(ClearType::All))?;
