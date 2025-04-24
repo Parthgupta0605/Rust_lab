@@ -38,21 +38,21 @@ impl Cell {
         }
     }
 
-    fn display(&self) -> String {
-        // Truncate if content exceeds cell width
-        let content = if self.display_value.len() > self.width {
-            self.display_value[0..self.width].to_string()
-        } else {
-            self.display_value.clone()
-        };
+    // fn display(&self) -> String {
+    //     // Truncate if content exceeds cell width
+    //     let content = if self.display_value.len() > self.width {
+    //         self.display_value[0..self.width].to_string()
+    //     } else {
+    //         self.display_value.clone()
+    //     };
 
-        // Apply alignment
-        match self.alignment {
-            Alignment::Left => format!("{:<width$}", content, width = self.width),
-            Alignment::Right => format!("{:>width$}", content, width = self.width),
-            Alignment::Center => format!("{:^width$}", content, width = self.width),
-        }
-    }
+    //     // Apply alignment
+    //     match self.alignment {
+    //         Alignment::Left => format!("{:<width$}", content, width = self.width),
+    //         Alignment::Right => format!("{:>width$}", content, width = self.width),
+    //         Alignment::Center => format!("{:^width$}", content, width = self.width),
+    //     }
+    // }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

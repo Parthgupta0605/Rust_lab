@@ -1,19 +1,19 @@
-mod cell;
 mod avl;
+mod cell;
 mod stack;
 mod extended;
+use crate::avl::*;
 use crate::cell::*;
 use crate::stack::*;
-use crate::avl::*;
 
 // use sscanf::sscanf;
 use regex::Regex;
 use std::time::Instant;
 // use std::cell::RefCell;
-use std::rc::Rc;
-use std::time::SystemTime;
 use std::env;
 use std::io::{self, Write};
+use std::rc::Rc;
+use std::time::SystemTime;
 
 pub static mut FLAG: i32 = 1;
 pub static mut R: usize = 0;
@@ -91,15 +91,15 @@ pub const MAX_INPUT_LEN: usize = 1000;
 //     }
 // }
 
-    pub fn add_dependency(c: CellRef, dep: CellRef, sheet_data: &mut SheetData) {
-        // unsafe {
-        //     c.borrow_mut().dependencies = insert(c.borrow_mut().dependencies.take(), dep.clone(), sheet_data);
-        // }
-        let mut cell = c.borrow_mut();
-        let old_deps = cell.dependencies.take(); // take() gives you the inner value and sets it to None
-        let new_deps = insert(old_deps, dep.clone(), sheet_data);
-        cell.dependencies = new_deps;
-    }
+pub fn add_dependency(c: CellRef, dep: CellRef, sheet_data: &mut SheetData) {
+    // unsafe {
+    //     c.borrow_mut().dependencies = insert(c.borrow_mut().dependencies.take(), dep.clone(), sheet_data);
+    // }
+    let mut cell = c.borrow_mut();
+    let old_deps = cell.dependencies.take(); // take() gives you the inner value and sets it to None
+    let new_deps = insert(old_deps, dep.clone(), sheet_data);
+    cell.dependencies = new_deps;
+}
 
 pub fn add_dependent(c: CellRef, dep: CellRef) {
     push_dependent(&c, dep);
@@ -115,8 +115,8 @@ pub fn add_dependent(c: CellRef, dep: CellRef) {
 // }
 pub fn delete_dependencies(cell1: CellRef, row: usize, col: usize, sheet_data: &mut SheetData) {
     loop {
-        let (r,c) = sheet_data.calculate_row_col(&cell1).unwrap_or((0, 0));
-        println!("Deleting dependencies for cell at row: {}, col: {}", r, c);
+        // let (r, c) = sheet_data.calculate_row_col(&cell1).unwrap_or((0, 0));
+        // println!("Deleting dependencies for cell at row: {}, col: {}", r, c);
         // Move this into a scoped block to release borrow before pop_dependent
         let dependent_node = {
             let mut cell_borrow = cell1.borrow_mut();
@@ -129,7 +129,6 @@ pub fn delete_dependencies(cell1: CellRef, row: usize, col: usize, sheet_data: &
         let dependent_ref = dependent_node.borrow();
         let mut dependent = dependent_ref.cell.borrow_mut();
         dependent.dependencies = delete_node(dependent.dependencies.take(), row, col, sheet_data);
-
 
         pop_dependent(&cell1); // now it's safe to mutably borrow again
     }
@@ -186,7 +185,14 @@ pub fn check_loop(
     sheet_data: &SheetData,
 ) -> bool {
     let mut visited = vec![false; unsafe { R * C }];
-    let result = dfs(start, target, &mut visited, start_row, start_col, sheet_data);
+    let result = dfs(
+        start,
+        target,
+        &mut visited,
+        start_row,
+        start_col,
+        sheet_data,
+    );
     result
 }
 
@@ -200,7 +206,7 @@ pub fn dfs_range(
     current_row: usize,
     current_col: usize,
     // sheet: &mut Vec<Vec<CellRef>>,
-    sheet_data: &SheetData
+    sheet_data: &SheetData,
 ) -> bool {
     if current_row >= row1 && current_row <= row2 && current_col >= col1 && current_col <= col2 {
         return true;
@@ -216,7 +222,9 @@ pub fn dfs_range(
             // let dep_col = dep_ptr / std::mem::size_of::<RefCell<Cell>>() % unsafe { C };
             let dep_row = sheet_data.calculate_row_col(dep_cell).unwrap_or((0, 0)).0;
             let dep_col = sheet_data.calculate_row_col(dep_cell).unwrap_or((0, 0)).1;
-            if dfs_range(dep_cell, visited, row1, col1, row2, col2, dep_row, dep_col, sheet_data) {
+            if dfs_range(
+                dep_cell, visited, row1, col1, row2, col2, dep_row, dep_col, sheet_data,
+            ) {
                 return true;
             }
             stack.push(node.borrow().left.clone());
@@ -238,7 +246,17 @@ pub fn check_loop_range(
     sheet_data: &SheetData,
 ) -> bool {
     let mut visited = vec![false; unsafe { R * C }];
-    dfs_range(start, &mut visited, row1, col1, row2, col2, start_row, start_col, sheet_data)
+    dfs_range(
+        start,
+        &mut visited,
+        row1,
+        col1,
+        row2,
+        col2,
+        start_row,
+        start_col,
+        sheet_data,
+    )
 }
 
 pub fn topological_sort_util(
@@ -311,8 +329,12 @@ fn topological_dfs_traverse(
 //     }
 // }
 
-pub fn topological_sort_from_cell(start_cell: &CellRef, sheet_data: &SheetData, stack: &mut StackLink) {
-    println!("Topological sort from cell");
+pub fn topological_sort_from_cell(
+    start_cell: &CellRef,
+    sheet_data: &SheetData,
+    stack: &mut StackLink,
+) {
+    // println!("Topological sort from cell");
     let mut visited = vec![false; unsafe { R * C }];
     topological_sort_util(start_cell, &mut visited, sheet_data, stack);
 }
@@ -336,7 +358,12 @@ pub fn scroll(input: &str) -> i32 {
 
 pub fn sleep_seconds(seconds: u64) {
     let start_time = SystemTime::now();
-    while SystemTime::now().duration_since(start_time).unwrap().as_secs() < seconds {
+    while SystemTime::now()
+        .duration_since(start_time)
+        .unwrap()
+        .as_secs()
+        < seconds
+    {
         // busy wait
     }
 }
@@ -481,8 +508,6 @@ fn split_label_and_number(s: &str) -> Option<(String, String)> {
     }
 }
 
-
-
 fn evaluate_expression(
     expr: &str,
     rows: usize,
@@ -498,8 +523,8 @@ fn evaluate_expression(
     let mut row1: i32 = 0;
     let mut col2: usize = 0;
     let mut row2: i32 = 0;
-    let  value1 ;
-    let  value2 ;
+    let value1;
+    let value2;
 
     let trimmed_expr = expr.trim();
     // println!("trimmed_expr: {}", trimmed_expr);
@@ -508,7 +533,7 @@ fn evaluate_expression(
     if let Ok(val) = trimmed_expr.parse::<i32>() {
         *result = val;
         if call_value == 1 {
-            println!("Inside call_value == 1");
+            // println!("Inside call_value == 1");
             let current = &(sheet_data.sheet)[*row][*col];
             delete_dependencies(current.clone(), *row, *col, sheet_data);
         }
@@ -545,7 +570,7 @@ fn evaluate_expression(
             }
             if let Ok(r) = num1.parse::<i32>() {
                 row1 = r - 1;
-                if  col1 >= cols  || row1 < 0 || row1 >= rows as i32 {
+                if col1 >= cols || row1 < 0 || row1 >= rows as i32 {
                     return -1;
                 }
 
@@ -586,7 +611,7 @@ fn evaluate_expression(
             }
             if let Ok(r) = num2.parse::<i32>() {
                 row2 = r - 1;
-                if  col2 >= cols  || row2 < 0 || row2 >= rows as i32 {
+                if col2 >= cols || row2 < 0 || row2 >= rows as i32 {
                     return -1;
                 }
 
@@ -615,27 +640,41 @@ fn evaluate_expression(
         } else {
             return -1;
         }
-        println!("value2: {}", value2);
-        println!("call_value: {}", call_value);
+        // println!("value2: {}", value2);
+        // println!("call_value: {}", call_value);
 
         // Dependency logic
         if call_value == 1 {
             let current = (sheet_data.sheet)[*row][*col].clone();
             delete_dependencies(current.clone(), *row, *col, sheet_data);
 
-            if  row1 >= 0 {
-                add_dependency((sheet_data.sheet)[row1 as usize][col1 as usize].clone(), current.clone(), sheet_data);
-                add_dependent(current.clone(), (sheet_data.sheet)[row1 as usize][col1 as usize].clone());
+            if row1 >= 0 {
+                add_dependency(
+                    (sheet_data.sheet)[row1 as usize][col1 as usize].clone(),
+                    current.clone(),
+                    sheet_data,
+                );
+                add_dependent(
+                    current.clone(),
+                    (sheet_data.sheet)[row1 as usize][col1 as usize].clone(),
+                );
             }
 
-            if  row2 >= 0 && (col2 != col1 || row2 != row1) {
-                add_dependency((sheet_data.sheet)[row2 as usize][col2 as usize].clone(), current.clone(), sheet_data);
-                add_dependent(current, (sheet_data.sheet)[row2 as usize][col2 as usize].clone());
+            if row2 >= 0 && (col2 != col1 || row2 != row1) {
+                add_dependency(
+                    (sheet_data.sheet)[row2 as usize][col2 as usize].clone(),
+                    current.clone(),
+                    sheet_data,
+                );
+                add_dependent(
+                    current,
+                    (sheet_data.sheet)[row2 as usize][col2 as usize].clone(),
+                );
             }
         }
 
         if count_status > 0 {
-            println!("count_status: {}", count_status);
+            // println!("count_status: {}", count_status);
             return -2;
         }
 
@@ -663,9 +702,9 @@ fn evaluate_expression(
                 return -1; // Invalid operator
             }
         }
-    } 
+    }
 
-    // let mut func = String::new(); 
+    // let mut func = String::new();
     // let mut label1 = String::new();
     // let mut label2 = String::new();
     // let mut temp = String::new();
@@ -682,254 +721,347 @@ fn evaluate_expression(
         let row1_str = caps.get(3).unwrap().as_str().to_string();
         let label2 = caps.get(4).unwrap().as_str().to_string();
         let row2_str = caps.get(5).unwrap().as_str().to_string();
-        let temp = caps.get(6).map_or(String::new(), |m| m.as_str().to_string());
-        
+        let temp = caps
+            .get(6)
+            .map_or(String::new(), |m| m.as_str().to_string());
+
         if !temp.is_empty() {
             return -1; // Invalid format if there's extra content after the number
         }
-        if (func != "SUM" && func != "AVG" && func != "MAX" && func != "MIN" && func != "STDEV") || (label1.len() > 3 || label2.len() > 3) {
-            return -1; // Invalid function 
+        if (func != "SUM" && func != "AVG" && func != "MAX" && func != "MIN" && func != "STDEV")
+            || (label1.len() > 3 || label2.len() > 3)
+        {
+            return -1; // Invalid function
         }
-        
+
         if row1_str.starts_with('0') {
             return -1; // Invalid expression
         }
         row1 = row1_str.parse::<i32>().unwrap_or(-1);
         row2 = row2_str.parse::<i32>().unwrap_or(-1);
-    if temp.is_empty() {
+        if temp.is_empty() {
+            // Check validity of row and label lengths
+            let len_row1 = row1.to_string().len();
+            let len_row2 = row2.to_string().len();
 
-
-        // Check validity of row and label lengths
-        let len_row1 = row1.to_string().len();
-        let len_row2 = row2.to_string().len();
-
-        if expr.chars().nth(func.len() + label1.len() + 1 + len_row1 + 1 + label2.len()) == Some('0') {
-            return -1; // Invalid cell
-        }
-        if expr.chars().nth(func.len() + label1.len() + 1 + len_row1 + 1 + label2.len() + len_row2) != Some(')') {
-            return -1; // Invalid cell
-        }
-
-        if let Some(val) = col_label_to_index(&label1) {
-            col1 = val as usize;
-        }
-        if let Some(val) = col_label_to_index(&label2) {
-            col2 = val as usize;
-        }
-        row1 -= 1;
-        row2 -= 1;
-
-        if  col1 >= cols || row1 < 0 || row1 >= rows as i32 ||  col2 >= cols || row2 < 0 || row2 >= rows as i32 || row2 < row1 || col2 < col1 {
-            return -1; // Out-of-bounds error
-        }
-
-        if check_loop_range(&(sheet_data.sheet)[*row as usize][*col as usize], row1 as usize, col1, row2 as usize, col2, *row, *col, &*sheet_data) {
-            return -4; // Circular dependency detected
-        }
-
-        // Handle SUM function
-        if func == "SUM" {
-            *result = 0;
-            if call_value == 1 {
-                delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize].clone(), *row, *col, sheet_data);
+            if expr
+                .chars()
+                .nth(func.len() + label1.len() + 1 + len_row1 + 1 + label2.len())
+                == Some('0')
+            {
+                return -1; // Invalid cell
+            }
+            if expr
+                .chars()
+                .nth(func.len() + label1.len() + 1 + len_row1 + 1 + label2.len() + len_row2)
+                != Some(')')
+            {
+                return -1; // Invalid cell
             }
 
-            for i in row1..=row2 {
-                for j in col1..=col2 {
-                    {
-                    let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
-                    if cell.status == 1 {
-                        count_status += 1;
-                    }
-                    *result += cell.val;
+            if let Some(val) = col_label_to_index(&label1) {
+                col1 = val as usize;
+            }
+            if let Some(val) = col_label_to_index(&label2) {
+                col2 = val as usize;
+            }
+            row1 -= 1;
+            row2 -= 1;
+
+            if col1 >= cols
+                || row1 < 0
+                || row1 >= rows as i32
+                || col2 >= cols
+                || row2 < 0
+                || row2 >= rows as i32
+                || row2 < row1
+                || col2 < col1
+            {
+                return -1; // Out-of-bounds error
+            }
+
+            if check_loop_range(
+                &(sheet_data.sheet)[*row as usize][*col as usize],
+                row1 as usize,
+                col1,
+                row2 as usize,
+                col2,
+                *row,
+                *col,
+                &*sheet_data,
+            ) {
+                return -4; // Circular dependency detected
+            }
+
+            // Handle SUM function
+            if func == "SUM" {
+                *result = 0;
+                if call_value == 1 {
+                    delete_dependencies(
+                        (sheet_data.sheet)[*row as usize][*col as usize].clone(),
+                        *row,
+                        *col,
+                        sheet_data,
+                    );
                 }
-                    if call_value == 1 {
-                        add_dependency((sheet_data.sheet)[i as usize][j as usize].clone(), (sheet_data.sheet)[*row as usize][*col as usize].clone(), sheet_data);
-                        add_dependent((sheet_data.sheet)[*row as usize][*col as usize].clone(), (sheet_data.sheet)[i as usize][j as usize].clone());
+
+                for i in row1..=row2 {
+                    for j in col1..=col2 {
+                        {
+                            let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
+                            if cell.status == 1 {
+                                count_status += 1;
+                            }
+                            *result += cell.val;
+                        }
+                        if call_value == 1 {
+                            add_dependency(
+                                (sheet_data.sheet)[i as usize][j as usize].clone(),
+                                (sheet_data.sheet)[*row as usize][*col as usize].clone(),
+                                sheet_data,
+                            );
+                            add_dependent(
+                                (sheet_data.sheet)[*row as usize][*col as usize].clone(),
+                                (sheet_data.sheet)[i as usize][j as usize].clone(),
+                            );
+                        }
                     }
                 }
+
+                if count_status > 0 {
+                    return -2; // Error in dependents
+                }
+                return 0;
             }
 
-            if count_status > 0 {
-                return -2; // Error in dependents
+            // Handle AVG function
+            if func == "AVG" {
+                *result = 0;
+                let mut count = 0;
+
+                if call_value == 1 {
+                    //let mut cell = sheet[*row as usize][*col as usize].borrow_mut();
+                    delete_dependencies(
+                        (sheet_data.sheet)[*row as usize][*col as usize].clone(),
+                        *row,
+                        *col,
+                        sheet_data,
+                    );
+                }
+
+                for i in row1..=row2 {
+                    for j in col1..=col2 {
+                        {
+                            let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
+                            if cell.status == 1 {
+                                count_status += 1;
+                            }
+                            *result += cell.val;
+                            count += 1;
+                        }
+                        if call_value == 1 {
+                            add_dependency(
+                                (sheet_data.sheet)[i as usize][j as usize].clone(),
+                                (sheet_data.sheet)[*row as usize][*col as usize].clone(),
+                                sheet_data,
+                            );
+                            add_dependent(
+                                (sheet_data.sheet)[*row as usize][*col as usize].clone(),
+                                (sheet_data.sheet)[i as usize][j as usize].clone(),
+                            );
+                        }
+                    }
+                }
+
+                *result /= count;
+
+                if count_status > 0 {
+                    return -2; // Error in dependents
+                }
+                return 0;
             }
-            return 0;
-        }
 
-        // Handle AVG function
-        if func == "AVG" {
-            *result = 0;
-            let mut count = 0;
+            // Handle MAX function
+            if func == "MAX" {
+                // println!("Inside MAX");
+                *result = i32::MIN;
+                if call_value == 1 {
+                    delete_dependencies(
+                        (sheet_data.sheet)[*row as usize][*col as usize].clone(),
+                        *row,
+                        *col,
+                        sheet_data,
+                    );
+                }
+                // println!("{:?}", row1);
+                // println!("{:?}", row2);
+                // println!("{:?}", col1);
+                // println!("{:?}", col2);
+                for i in row1..=row2 {
+                    for j in col1..=col2 {
+                        if call_value == 1 {
+                            add_dependency(
+                                (sheet_data.sheet)[i as usize][j as usize].clone(),
+                                (sheet_data.sheet)[*row as usize][*col as usize].clone(),
+                                sheet_data,
+                            );
+                            add_dependent(
+                                (sheet_data.sheet)[*row as usize][*col as usize].clone(),
+                                (sheet_data.sheet)[i as usize][j as usize].clone(),
+                            );
+                        }
 
-            if call_value == 1 {
-                //let mut cell = sheet[*row as usize][*col as usize].borrow_mut();
-                delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize].clone(), *row, *col, sheet_data);
-            }
-
-            for i in row1..=row2 {
-                for j in col1..=col2 {
-                    {
                         let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
-                    if cell.status == 1 {
-                        count_status += 1;
+                        // println!("{:?}", cell.status);
+                        if cell.status == 1 {
+                            // println!("i: {:?}", i);
+                            // println!("j: {:?}", j);
+                            count_status += 1;
+                        }
+
+                        *result = cell.val.max(*result);
                     }
-                    *result += cell.val;
-                    count += 1;
                 }
-                    if call_value == 1 {
-                        add_dependency((sheet_data.sheet)[i as usize][j as usize].clone(), (sheet_data.sheet)[*row as usize][*col as usize].clone(), sheet_data);
-                        add_dependent((sheet_data.sheet)[*row as usize][*col as usize].clone(), (sheet_data.sheet)[i as usize][j as usize].clone());
+
+                if count_status > 0 {
+                    return -2; // Error in dependents
+                }
+                return 0;
+            }
+
+            // Handle MIN function
+            if func == "MIN" {
+                *result = i32::MAX;
+                if call_value == 1 {
+                    delete_dependencies(
+                        (sheet_data.sheet)[*row as usize][*col as usize].clone(),
+                        *row,
+                        *col,
+                        sheet_data,
+                    );
+                }
+
+                for i in row1..=row2 {
+                    for j in col1..=col2 {
+                        {
+                            let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
+                            if cell.status == 1 {
+                                count_status += 1;
+                            }
+                            *result = cell.val.min(*result);
+                        }
+
+                        if call_value == 1 {
+                            add_dependency(
+                                (sheet_data.sheet)[i as usize][j as usize].clone(),
+                                (sheet_data.sheet)[*row as usize][*col as usize].clone(),
+                                sheet_data,
+                            );
+                            add_dependent(
+                                (sheet_data.sheet)[*row as usize][*col as usize].clone(),
+                                (sheet_data.sheet)[i as usize][j as usize].clone(),
+                            );
+                        }
                     }
                 }
-            }
 
-            *result /= count ;
-
-            if count_status > 0 {
-                return -2; // Error in dependents
-            }
-            return 0;
-        }
-
-        // Handle MAX function
-        if func == "MAX" {
-            // println!("Inside MAX");
-            *result = i32::MIN;
-            if call_value == 1 {
-                delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize].clone(), *row, *col, sheet_data);
-            }
-            // println!("{:?}", row1);
-            // println!("{:?}", row2);
-            // println!("{:?}", col1);
-            // println!("{:?}", col2);
-            for i in row1..=row2 {
-                for j in col1..=col2 {
-                    if call_value == 1 {
-                        add_dependency((sheet_data.sheet)[i as usize][j as usize].clone(), (sheet_data.sheet)[*row as usize][*col as usize].clone(), sheet_data);
-                        add_dependent((sheet_data.sheet)[*row as usize][*col as usize].clone(), (sheet_data.sheet)[i as usize][j as usize].clone());
-                    }
-
-                    let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
-                    // println!("{:?}", cell.status);
-                    if cell.status == 1 {
-                        println!("i: {:?}", i);
-                        println!("j: {:?}", j);
-                        count_status += 1;
-                    }
-
-                    *result = cell.val.max(*result);
+                if count_status > 0 {
+                    return -2; // Error in dependents
                 }
+                return 0;
             }
 
-            if count_status > 0 {
-                return -2; // Error in dependents
-            }
-            return 0;
-        }
+            // Handle STDEV function
+            if func == "STDEV" {
+                let mut sum = 0;
+                let mut count = 0;
+                if call_value == 1 {
+                    delete_dependencies(
+                        (sheet_data.sheet)[*row as usize][*col as usize].clone(),
+                        *row,
+                        *col,
+                        sheet_data,
+                    );
+                }
 
-        // Handle MIN function
-        if func == "MIN" {
-            *result = i32::MAX;
-            if call_value == 1 {
-                delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize].clone(), *row, *col, sheet_data);
-            }
+                for i in row1..=row2 {
+                    for j in col1..=col2 {
+                        {
+                            let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
+                            if cell.status == 1 {
+                                count_status += 1;
+                            }
+                            sum += cell.val;
+                            count += 1;
+                        }
+                        if call_value == 1 {
+                            add_dependency(
+                                (sheet_data.sheet)[i as usize][j as usize].clone(),
+                                (sheet_data.sheet)[*row as usize][*col as usize].clone(),
+                                sheet_data,
+                            );
+                            add_dependent(
+                                (sheet_data.sheet)[*row as usize][*col as usize].clone(),
+                                (sheet_data.sheet)[i as usize][j as usize].clone(),
+                            );
+                        }
+                    }
+                }
 
-            for i in row1..=row2 {
-                for j in col1..=col2 {
-                    {
+                let mean: i32 = sum / count;
+                let mut variance: f64 = 0.0;
+
+                for i in row1..=row2 {
+                    for j in col1..=col2 {
                         let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
-                    if cell.status == 1 {
-                        count_status += 1;
+                        variance += ((cell.val - mean).pow(2)) as f64;
                     }
-                    *result = cell.val.min(*result);
                 }
 
-                    if call_value == 1 {
-                        add_dependency((sheet_data.sheet)[i as usize][j as usize].clone(), (sheet_data.sheet)[*row as usize][*col as usize].clone(), sheet_data);
-                        add_dependent((sheet_data.sheet)[*row as usize][*col as usize].clone(), (sheet_data.sheet)[i as usize][j as usize].clone());
-                    }
+                variance /= count as f64;
+                *result = variance.sqrt().round() as i32;
 
-                   
+                if count_status > 0 {
+                    return -2; // Error in dependents
                 }
+                return 0;
             }
-
-            if count_status > 0 {
-                return -2; // Error in dependents
-            }
-            return 0;
-        }
-
-        // Handle STDEV function
-        if func == "STDEV" {
-            let mut sum = 0;
-            let mut count = 0;
-            if call_value == 1 {
-                delete_dependencies((sheet_data.sheet)[*row as usize][*col as usize].clone(), *row, *col, sheet_data);
-            }
-
-            for i in row1..=row2 {
-                for j in col1..=col2 {
-                    {
-                    let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
-                    if cell.status == 1 {
-                        count_status += 1;
-                    }
-                    sum += cell.val;
-                    count += 1;
-                }
-                    if call_value == 1 {
-                        add_dependency((sheet_data.sheet)[i as usize][j as usize].clone(), (sheet_data.sheet)[*row as usize][*col as usize].clone(), sheet_data);
-                        add_dependent((sheet_data.sheet)[*row as usize][*col as usize].clone(), (sheet_data.sheet)[i as usize][j as usize].clone());
-                    }
-
-                   
-                }
-            }
-
-            let mean: i32 = sum / count;
-            let mut variance: f64 = 0.0;
-
-            for i in row1..=row2 {
-                for j in col1..=col2 {
-                    let cell = (sheet_data.sheet)[i as usize][j as usize].borrow();
-                    variance += ((cell.val - mean).pow(2)) as f64;
-                }
-            }
-
-            variance /= count as f64;
-            *result = variance.sqrt().round() as i32;
-
-            if count_status > 0 {
-                return -2; // Error in dependents
-            }
-            return 0;
         }
     }
-}
     // println!("DEBUG3: {}", expr);
-    if let Some(caps) = regex::Regex::new(r"^SLEEP\((\d+)([^\)]*)\)$").unwrap().captures(expr.trim()) {
+    if let Some(caps) = regex::Regex::new(r"^SLEEP\((\d+)([^\)]*)\)$")
+        .unwrap()
+        .captures(expr.trim())
+    {
         let result_value = caps.get(1).unwrap().as_str().parse::<i32>().unwrap_or(-1);
-        let temp = caps.get(2).map_or(String::new(), |m| m.as_str().to_string());
-    
+        let temp = caps
+            .get(2)
+            .map_or(String::new(), |m| m.as_str().to_string());
+
         if !temp.is_empty() {
             return -1; // Invalid format if there's extra content after the number
         }
-    
+
         if result_value < 0 {
             *result = result_value;
             return 0; // Invalid sleep time
         }
-    
+
         // Call sleep function (assuming a placeholder here)
-        sleep_seconds(result_value.try_into().unwrap_or(0)); 
+        sleep_seconds(result_value.try_into().unwrap_or(0));
         return 0;
     }
     // println!("DEBUG4: {}", expr);
     // SLEEP with cell reference parsing
-    if let Some(caps) = regex::Regex::new(r"^SLEEP\(([A-Z]+)(\d+)([^\)]*)\)$").unwrap().captures(expr.trim()) {
+    if let Some(caps) = regex::Regex::new(r"^SLEEP\(([A-Z]+)(\d+)([^\)]*)\)$")
+        .unwrap()
+        .captures(expr.trim())
+    {
         let label1 = caps.get(1).unwrap().as_str();
         let row1: usize = caps.get(2).unwrap().as_str().parse().unwrap_or(0);
-        let temp = caps.get(3).map_or(String::new(), |m| m.as_str().to_string());
+        let temp = caps
+            .get(3)
+            .map_or(String::new(), |m| m.as_str().to_string());
 
         // Validate that there are no extra characters after the number
         if !temp.is_empty() {
@@ -947,12 +1079,18 @@ fn evaluate_expression(
         let row1 = row1 - 1; // Convert 1-based index to 0-based
 
         // Validate cell boundaries
-        if  col1 >= cols || row1 >= rows as usize {
+        if col1 >= cols || row1 >= rows as usize {
             return -1; // Out-of-bounds error
         }
 
         // Check for circular dependency
-        if check_loop(&(*sheet_data.sheet)[*row][*col], &(*sheet_data.sheet)[row1][col1], *row, *col, &*sheet_data) {
+        if check_loop(
+            &(*sheet_data.sheet)[*row][*col],
+            &(*sheet_data.sheet)[row1][col1],
+            *row,
+            *col,
+            &*sheet_data,
+        ) {
             return -4; // Circular dependency detected
         }
 
@@ -969,12 +1107,19 @@ fn evaluate_expression(
             let current = (sheet_data.sheet)[*row][*col].clone();
             delete_dependencies(current.clone(), *row, *col, sheet_data);
 
-            add_dependency((*(sheet_data.sheet))[row1][col1].clone(), (*(sheet_data.sheet))[*row][*col].clone(), sheet_data);
-            add_dependent((*(sheet_data.sheet))[*row][*col].clone(), (*(sheet_data.sheet))[row1][col1].clone());
+            add_dependency(
+                (*(sheet_data.sheet))[row1][col1].clone(),
+                (*(sheet_data.sheet))[*row][*col].clone(),
+                sheet_data,
+            );
+            add_dependent(
+                (*(sheet_data.sheet))[*row][*col].clone(),
+                (*(sheet_data.sheet))[row1][col1].clone(),
+            );
         }
         *result = result_value;
         // if result_value < 0 {
-            
+
         //     return 0; // Invalid sleep time
         // }
 
@@ -990,10 +1135,15 @@ fn evaluate_expression(
     }
     // println!("DEBUG: {}", expr);
     // Handle cell reference parsing (e.g., "A1", "B2", etc.)
-    if let Some(caps) = regex::Regex::new(r"^([A-Z]+)(\d+)([^\n]*)$").unwrap().captures(expr.trim()) {
+    if let Some(caps) = regex::Regex::new(r"^([A-Z]+)(\d+)([^\n]*)$")
+        .unwrap()
+        .captures(expr.trim())
+    {
         let label1 = caps.get(1).unwrap().as_str();
         let row1: usize = caps.get(2).unwrap().as_str().parse().unwrap_or(0);
-        let temp = caps.get(3).map_or(String::new(), |m| m.as_str().to_string());
+        let temp = caps
+            .get(3)
+            .map_or(String::new(), |m| m.as_str().to_string());
 
         // Check for invalid cell references if there's extra content
         if !temp.is_empty() {
@@ -1006,23 +1156,29 @@ fn evaluate_expression(
         }
 
         if let Some(val) = col_label_to_index(&label1) {
-            col1 = val ;
+            col1 = val;
         }
         let row1 = row1 - 1; // Convert 1-based index to 0-based
 
         // Validate cell boundaries
-        if  col1 >= cols || row1 >= rows as usize {
+        if col1 >= cols || row1 >= rows as usize {
             return -1; // Out-of-bounds error
         }
 
         // Check for circular dependency
-        if check_loop(&(*(sheet_data.sheet))[*row][*col], &(*(sheet_data.sheet))[row1][col1], *row, *col, &*sheet_data) {
+        if check_loop(
+            &(*(sheet_data.sheet))[*row][*col],
+            &(*(sheet_data.sheet))[row1][col1],
+            *row,
+            *col,
+            &*sheet_data,
+        ) {
             return -4; // Circular dependency detected
         }
 
         // Check if the referenced cell has an error (status = 1)
         let mut count_status = 0;
-        
+
         if (*(sheet_data.sheet))[row1][col1].borrow().status == 1 {
             count_status += 1; // Increment if the referenced cell has an error
         }
@@ -1034,8 +1190,15 @@ fn evaluate_expression(
             let current = (sheet_data.sheet)[*row][*col].clone();
             delete_dependencies(current.clone(), *row, *col, sheet_data);
 
-            add_dependency((*(sheet_data.sheet))[row1][col1].clone(), (*(sheet_data.sheet))[*row][*col].clone(), sheet_data);
-            add_dependent((*(sheet_data.sheet))[*row][*col].clone(), (*(sheet_data.sheet))[row1][col1].clone());
+            add_dependency(
+                (*(sheet_data.sheet))[row1][col1].clone(),
+                (*(sheet_data.sheet))[*row][*col].clone(),
+                sheet_data,
+            );
+            add_dependent(
+                (*(sheet_data.sheet))[*row][*col].clone(),
+                (*(sheet_data.sheet))[row1][col1].clone(),
+            );
         }
 
         // If any dependents have errors, return -2
@@ -1047,35 +1210,34 @@ fn evaluate_expression(
     }
 
     return -1;
-
-
 }
 
-
-
-
-pub fn execute_command(input: &str, rows: usize, cols: usize,sheet_data: &mut SheetData) -> i32 {
+pub fn execute_command(input: &str, rows: usize, cols: usize, sheet_data: &mut SheetData) -> i32 {
     match input {
         "q" => {
             // Drop all memory (handled automatically in Rust)
             return 1;
-        },
+        }
         "w" | "s" | "a" | "d" => {
             return scroll(input);
-        },
+        }
         _ => {}
     }
     let mut col: usize = 0;
     // let mut row: usize = 0;
     if let Some(captures) = input.strip_prefix("scroll_to ") {
-        let (col_label, row_str) = captures.trim().split_at(captures.find(|c: char| c.is_ascii_digit()).unwrap_or(0));
-        if row_str.starts_with("0") { return -1; }
+        let (col_label, row_str) = captures
+            .trim()
+            .split_at(captures.find(|c: char| c.is_ascii_digit()).unwrap_or(0));
+        if row_str.starts_with("0") {
+            return -1;
+        }
         if let Some(val) = col_label_to_index(&col_label) {
             col = val as usize;
         }
         let row: usize = row_str.parse().unwrap_or(0_usize).saturating_sub(1);
 
-        if col >= cols || row >= rows  {
+        if col >= cols || row >= rows {
             return -1;
         }
 
@@ -1087,22 +1249,43 @@ pub fn execute_command(input: &str, rows: usize, cols: usize,sheet_data: &mut Sh
     }
 
     match input {
-        "disable_output" => { unsafe { FLAG = 0; } return 0; },
-        "enable_output" => { unsafe { FLAG = 1; } return 0; },
+        "disable_output" => {
+            unsafe {
+                FLAG = 0;
+            }
+            return 0;
+        }
+        "enable_output" => {
+            unsafe {
+                FLAG = 1;
+            }
+            return 0;
+        }
         _ => {}
     }
 
     if let Some((label, expr)) = input.split_once('=') {
-        // println!("label: {}, expr: {}", label, expr);        
+        // println!("label: {}, expr: {}", label, expr);
         let (row, col) = match label_to_index(label.trim()) {
             Some(rc) => rc,
             None => return -1,
         };
         // println!("label ki row: {}, col: {}", row, col);
-        if row >= rows || col >= cols { return -1; }
+        if row >= rows || col >= cols {
+            return -1;
+        }
 
         let mut result = 0;
-        match evaluate_expression(expr.trim(), rows, cols, sheet_data, &mut result, &row, &col, 1) {
+        match evaluate_expression(
+            expr.trim(),
+            rows,
+            cols,
+            sheet_data,
+            &mut result,
+            &row,
+            &col,
+            1,
+        ) {
             0 | 1 => {
                 let cell = &(sheet_data.sheet)[row][col];
                 cell.borrow_mut().val = result;
@@ -1111,54 +1294,76 @@ pub fn execute_command(input: &str, rows: usize, cols: usize,sheet_data: &mut Sh
 
                 let mut stack = None;
                 topological_sort_from_cell(cell, sheet_data, &mut stack);
-                
+
                 pop(&mut stack);
-                print_stack(&stack, "MyStack");
+                // print_stack(&stack, "MyStack");
 
                 while let Some(cell) = pop(&mut stack) {
-                    println!("Inside stack_node loop");
+                    // println!("Inside stack_node loop");
                     // let cell = &stack_node.borrow().cell;
                     if let Some((r, c)) = sheet_data.calculate_row_col(&cell) {
-                        println!("Row: {}, Col: {}", r, c);
+                        // println!("Row: {}, Col: {}", r, c);
                         let mut res = 0;
                         let code = {
                             let cell_ref = cell.borrow();
-                            evaluate_expression(&cell_ref.expression, rows, cols, sheet_data, &mut res, &r, &c, 0)
-                        }; 
+                            evaluate_expression(
+                                &cell_ref.expression,
+                                rows,
+                                cols,
+                                sheet_data,
+                                &mut res,
+                                &r,
+                                &c,
+                                0,
+                            )
+                        };
                         match code {
-                            0|1 => { 
+                            0 | 1 => {
                                 let mut cell_new = (sheet_data.sheet)[r][c].borrow_mut();
-                                println!("res: {}", res);
-                                cell_new.val = res; 
-                                cell_new.status = 0; 
-                            },
+                                // println!("res: {}", res);
+                                cell_new.val = res;
+                                cell_new.status = 0;
+                            }
                             -2 => (sheet_data.sheet)[r][c].borrow_mut().status = 1,
                             _ => {}
                         }
                     }
                 }
                 return 0;
-            },
+            }
             -2 => {
                 let cell = &(sheet_data.sheet)[row][col];
                 cell.borrow_mut().expression = expr.trim().to_string();
                 cell.borrow_mut().status = 1;
 
-                let mut stack:stack::StackLink = None;
-                topological_sort_from_cell(&(sheet_data.sheet)[row][col], sheet_data,&mut stack);
+                let mut stack: stack::StackLink = None;
+                topological_sort_from_cell(&(sheet_data.sheet)[row][col], sheet_data, &mut stack);
                 pop(&mut stack);
-                for stack_node in stack {
+                while let Some( ref stack_node) = stack {
                     if let Some((r, c)) = sheet_data.calculate_row_col(&stack_node.borrow().cell) {
-                    let mut res = 0;
-                    match evaluate_expression(&stack_node.borrow().cell.borrow().expression, rows, cols, sheet_data, &mut res, &r, &c, 0) {
-                        0 | 1 => { (sheet_data.sheet)[r][c].borrow_mut().val = res; (sheet_data.sheet)[r][c].borrow_mut().status = 0; },
-                        -2 => (sheet_data.sheet)[r][c].borrow_mut().status = 1,
-                        _ => {}
+                        let mut res = 0;
+                        match evaluate_expression(
+                            &stack_node.borrow().cell.borrow().expression,
+                            rows,
+                            cols,
+                            sheet_data,
+                            &mut res,
+                            &r,
+                            &c,
+                            0,
+                        ) {
+                            0 | 1 => {
+                                (sheet_data.sheet)[r][c].borrow_mut().val = res;
+                                (sheet_data.sheet)[r][c].borrow_mut().status = 0;
+                            }
+                            -2 => (sheet_data.sheet)[r][c].borrow_mut().status = 1,
+                            _ => {}
+                        }
                     }
+                    pop(&mut stack);
                 }
-            }
                 return -2;
-            },
+            }
             -4 => return -4,
             -1 => return -1,
             _ => return -1, // KABHI AAEGA NHI
@@ -1200,8 +1405,6 @@ fn main() {
         R = r;
         C = c;
     }
-
-
 
     if r < 1 || r > 999 {
         eprintln!("Invalid Input < 1<=R<=999 >");
