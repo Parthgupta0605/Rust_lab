@@ -1,3 +1,10 @@
+//! # Extended Spreadsheet Module for Hacker Spreadsheet
+//!
+//! This module extends the basic functionality of the spreadsheet program by 
+//! implementing a text-based editor inspired by Vim, specifically designed for
+//! terminal users. The extension aims to enhance the usability and functionality 
+//! of the original spreadsheet program, allowing for a keyboard-driven, privacy-focused 
+//! experience with remote editing capabilities.
 use std::env;
 use printpdf::{PdfDocument, PdfPage, PdfLayerIndex, BuiltinFont, Mm};
 use crossterm::{
@@ -13,12 +20,68 @@ use std::io::{self, stdout, BufReader, BufWriter, Write, Result};
 use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json;
+use std::process::{Command, Stdio};
+use std::sync::{Mutex, Arc, atomic::{AtomicBool, Ordering}};
+use std::thread;
+use rand::Rng;
+use rand::seq::SliceRandom;
+use rodio::{Decoder, OutputStream, Sink, Source};
 
+/// A static mutable variable to store the starting row for displaying the spreadsheet. 
 static mut START_ROW: usize = 0;
+/// A static mutable variable to store the starting column for displaying the spreadsheet.
 static mut START_COL: usize = 0;
+/// A static mutable variable to store the number of rows in the spreadsheet.
 static mut R :usize = 0;
+/// A static mutable variable to store the number of columns in the spreadsheet.
 static mut C :usize = 0;
+/// A static mutable variable to mark the haunted theme as true.
+static mut HAUNTED :bool = false;
+
+fn is_wsl() -> bool {
+    std::fs::read_to_string("/proc/version")
+        .map(|s| s.to_lowercase().contains("microsoft"))
+        .unwrap_or(false)
+}
+
+pub fn play_sound(path: &str) {
+    // Convert path to Windows-style and launch PowerShell
+    let win_path = path.replace("/", "\\");
+    let command = format!("(New-Object Media.SoundPlayer '{}').PlaySync();", win_path);
+
+    std::process::Command::new("powershell.exe")
+        .args(["-c", &command])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Failed to play sound via PowerShell");
+}
+
+fn flicker_effect() {
+    print!("\x1B[5m"); // Blink
+    println!("THE SHEET IS CURSED");
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    print!("\x1B[0m"); // Reset
+}
 // Cell struct to store data and metadata
+/// Represents a single cell in the spreadsheet.
+///
+/// The `Cell` struct holds both the raw input value (as entered by the user) and the 
+/// value to be displayed in the spreadsheet. It also supports formulas, text alignment, 
+/// and cell dimensions (width and height). The cell can be locked to prevent editing.
+///
+/// # Fields:
+/// - `raw_value`: The raw input string (e.g., numbers, text, or formulas).
+/// - `display_value`: The value that will be shown to the user, possibly altered by formulas.
+/// - `formula`: An optional string containing a formula that is applied to compute the value.
+/// - `is_locked`: A boolean indicating whether the cell is locked and cannot be edited.
+/// - `alignment`: The alignment of the text inside the cell (e.g., left, right, or center).
+/// - `width`: The width of the cell (in characters).
+/// - `height`: The height of the cell (in rows).
+/// # Methods:
+/// - `new`: Creates a new `Cell` with default values.
+/// - `display`: Returns the content of the cell formatted according to its alignment and width.
+/// - `default`: Creates a new, default `Cell` with empty values for `raw_value` and `display_value`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Cell {
     raw_value: String,       // Raw input
@@ -71,14 +134,25 @@ impl Cell {
         }
     }
 }
-
+/// Represents the alignment of text within a cell.
+///
+/// The `Alignment` enum defines the available text alignments for a cell:
+/// - `Left`: Aligns text to the left side of the cell.
+/// - `Right`: Aligns text to the right side of the cell.
+/// - `Center`: Centers the text in the middle of the cell.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 enum Alignment {
     Left,
     Right,
     Center,
 }
-
+/// Represents different modes the spreadsheet can be in.
+///
+/// The `Mode` enum defines the available modes for the spreadsheet editor:
+/// - `Normal`: Default mode for interacting with the spreadsheet.
+/// - `Insert`: Mode for inserting new data or formulas into cells.
+/// - `Command`: Mode for executing commands.
+/// - `Find`: Mode for searching within the spreadsheet.
 #[derive(Clone, Debug, PartialEq)]
 enum Mode {
     Normal,
@@ -86,7 +160,16 @@ enum Mode {
     Command,
     Find,
 }
-
+/// Represents a cell's address in the spreadsheet using column and row indices.
+///
+/// The `CellAddress` struct holds the `col` (column index) and `row` (row index) for a specific
+/// cell, and provides methods for converting between string representations of cell addresses
+/// (e.g., "A1", "B2") and the internal column/row index format.
+///
+/// # Methods:
+/// - `new`: Creates a new `CellAddress` from a column and row index.
+/// - `from_str`: Parses a string (e.g., "A1", "B2") into a `CellAddress` if valid.
+/// - `col_to_letters`: Converts a column index to the corresponding Excel-style column label (e.g., 0 -> "A", 1 -> "B", 26 -> "AA").
 #[derive(Clone, Debug)]
 struct CellAddress {
     col: usize,
@@ -94,10 +177,28 @@ struct CellAddress {
 }
 
 impl CellAddress {
+    /// Creates a new `CellAddress` from a column and row index.
+    ///
+    /// # Arguments:
+    /// - `col`: The zero-based column index (0 for 'A').
+    /// - `row`: The zero-based row index (0 for row 1).
+    ///
+    /// # Returns:
+    /// A `CellAddress` struct representing the cell at the specified position.
     fn new(col: usize, row: usize) -> Self {
         CellAddress { col, row }
     }
-
+    /// Parses a string (e.g., "A1", "B2") into a `CellAddress`.
+    ///
+    /// The string must be in the format of a letter (column) followed by a number (row),
+    /// such as "A1" or "B2". The column is case-insensitive.
+    ///
+    /// # Arguments:
+    /// - `addr`: A string representing the cell address, e.g., "A1", "B2".
+    ///
+    /// # Returns:
+    /// An `Option<CellAddress>`, which is `Some(CellAddress)` if the string is valid,
+    /// or `None` if the string is invalid.
     fn from_str(addr: &str) -> Option<Self> {
         if addr.len() < 2 {
             return None;
@@ -116,7 +217,13 @@ impl CellAddress {
             _ => None,
         }
     }
-
+    /// Converts a column index to an Excel-style column label (e.g., 0 -> "A", 1 -> "B", 26 -> "AA").
+    ///
+    /// # Arguments:
+    /// - `col`: The zero-based column index.
+    ///
+    /// # Returns:
+    /// A string representing the Excel-style column label.
     fn col_to_letters(mut col: usize) -> String {
         let mut label = String::new();
         col += 1; // shift to 1-based
@@ -127,11 +234,24 @@ impl CellAddress {
         }
         label
     }
-    
+      /// Converts the `CellAddress` to a string representation (e.g., "A1", "B2").
+    ///
+    /// # Returns:
+    /// A string representing the cell address in the format "A1", "B2", etc.
     fn to_string(&self) -> String {
        format!("{}{}", Self::col_to_letters(self.col), self.row + 1)
     }
 }
+
+// Represents an undo action in the spreadsheet, storing the state of a cell before an edit.
+///
+/// The `UndoAction` struct holds information about a cell's address and its previous state (the `old_cell`),
+/// allowing for the undoing of a specific change made to a cell. This can be useful for implementing 
+/// undo functionality in the spreadsheet editor.
+///
+/// # Fields:
+/// - `cell_address`: The address of the cell that was modified.
+/// - `old_cell`: The previous state of the cell before the edit was made, including its value, formula, and other properties.
 
 #[derive(Clone, Debug)]
 struct UndoAction {
@@ -139,18 +259,53 @@ struct UndoAction {
     old_cell: Cell,
 }
 
+
 struct SheetSnapshot {
     data: HashMap<String, Cell>,
     dependencies: HashMap<String, HashSet<String>>,
     dependents: HashMap<String, HashSet<String>>,
 }
 
+/// Represents a collection of cell changes in a single action that can be undone or redone.
+///
+/// The `SheetAction` struct groups multiple `UndoAction` instances that represent the changes made to cells
+/// during a particular operation. This structure is useful for tracking the state of a spreadsheet during edits
+/// and facilitates undo and redo functionality.
+///
+/// # Fields:
+/// - `cells`: A collection of all `UndoAction` instances, representing the changes made to individual cells
+///   in the current action.
 struct SheetAction {
     cells: Vec<UndoAction>,  // Collection of all cell changes in this action
 }
 
 
-
+/// Represents the state of the entire spreadsheet, including cell data, user interaction, and tracking of undo/redo actions.
+///
+/// The `Spreadsheet` struct encapsulates the entire state of a spreadsheet, including the data of each cell,
+/// the current cursor position, the mode of operation (e.g., normal, insert), and additional attributes to manage
+/// user actions such as undo, redo, and search. It also manages dependencies between cells and tracks changes
+/// in real-time to ensure consistent updates across the spreadsheet.
+///
+/// # Fields:
+/// - `data`: A `HashMap` storing the actual data (cells) of the spreadsheet, where the key is the cell address.
+/// - `cursor`: The current position of the cursor (cell address).
+/// - `mode`: The current mode of the spreadsheet (e.g., Normal, Insert, Command, Find).
+/// - `max_cols`: The maximum number of columns in the spreadsheet.
+/// - `max_rows`: The maximum number of rows in the spreadsheet.
+/// - `command_buffer`: A string buffer for storing the current command being entered by the user.
+/// - `status_message`: A message that displays the current status or feedback for the user.
+/// - `undo_stack`: A stack (using `VecDeque`) that tracks the history of actions that can be undone.
+/// - `redo_stack`: A stack (using `VecDeque`) that tracks the history of undone actions that can be redone.
+/// - `find_matches`: A list of `CellAddress` instances that match the current search query.
+/// - `current_find_match`: The index of the current match in the `find_matches` list.
+/// - `find_query`: The current search query being used to find matches in the spreadsheet.
+/// - `dependents`: A `HashMap` mapping a cell address to the set of cells that depend on it.
+/// - `dependencies`: A `HashMap` mapping a cell address to the set of cells it depends on.
+/// - `currently_updating`: A set of cell addresses currently being updated, used to avoid cycles in dependency resolution.
+/// - `haunted`: A boolean flag indicating whether the spreadsheet is in a "haunted" state (likely related to external communication).
+/// - `haunt_sink`: An optional `Sink` for streaming output related to the "haunting" state.
+/// - `haunt_stream`: An optional `OutputStream` for streaming output related to the "haunting" state.
 struct Spreadsheet {
     data: HashMap<String, Cell>,
     cursor: CellAddress,
@@ -167,9 +322,24 @@ struct Spreadsheet {
     dependents: HashMap<String, HashSet<String>>,  // Maps cell address to cells that depend on it
     dependencies: HashMap<String, HashSet<String>>,
     currently_updating: HashSet<String>, // Tracks cells being updated to prevent cycles
+    haunted : bool,
+    haunt_sink : Option<Sink>,
+    haunt_stream : Option<OutputStream>,
 }
 
 impl Spreadsheet {
+    /// Creates a new `Spreadsheet` instance with the given number of rows and columns.
+    ///
+    /// This method initializes a spreadsheet with the specified dimensions, creating
+    /// a grid of cells. It sets up the initial state for the spreadsheet, including the
+    /// cursor position, mode, undo and redo stacks, and other related fields.
+    ///
+    /// # Arguments:
+    /// - `rows`: The number of rows in the spreadsheet.
+    /// - `cols`: The number of columns in the spreadsheet
+    ///
+    /// # Returns:
+    /// A new `Spreadsheet` instance with the given number of rows and columns.
     fn new(rows: usize, cols: usize) -> Self {
         let mut sheet = Spreadsheet {
             data: HashMap::new(),
@@ -187,6 +357,9 @@ impl Spreadsheet {
             dependents: HashMap::new(),
             dependencies: HashMap::new(),
             currently_updating: HashSet::new(),
+            haunted: false,
+            haunt_sink: None,
+            haunt_stream: None,
         };
         
         // Initialize cells
@@ -200,15 +373,42 @@ impl Spreadsheet {
         sheet
     }
 
+    /// Retrieves a reference to a cell at the given address.
+    ///
+    /// This method looks up a cell in the spreadsheet based on the provided address.
+    ///
+    /// # Arguments:
+    /// - `addr`: A reference to the `CellAddress` of the cell to retrieve.
+    ///
+    /// # Returns:
+    /// An `Option` containing a reference to the `Cell` if it exists, or `None` if the address is invalid.
     fn get_cell(&self, addr: &CellAddress) -> Option<&Cell> {
-        // println!("DEBUG: {}", addr.to_string());
-        // println!("DEBUG: Current cell data: {:?}", self.data);
         self.data.get(&addr.to_string())
     }
 
+     /// Retrieves a mutable reference to a cell at the given address.
+    ///
+    /// This method allows for modifying the cell at the specified address.
+    ///
+    /// # Arguments:
+    /// - `addr`: A reference to the `CellAddress` of the cell to retrieve.
+    ///
+    /// # Returns:
+    /// An `Option` containing a mutable reference to the `Cell` if it exists, or `None` if the address is invalid.
     fn get_cell_mut(&mut self, addr: &CellAddress) -> Option<&mut Cell> {
         self.data.get_mut(&addr.to_string())
     }
+
+    /// Moves the cursor by the given number of columns and rows.
+    ///
+    /// This method updates the position of the cursor within the bounds of the spreadsheet.
+    ///
+    /// # Arguments:
+    /// - `dx`: The number of columns to move the cursor. Positive values move to the right, negative values to the left.
+    /// - `dy`: The number of rows to move the cursor. Positive values move down, negative values move up.
+    ///
+    /// # Notes:
+    /// The cursor will not move outside the bounds of the spreadsheet (i.e., the number of columns and rows).
 
     fn move_cursor(&mut self, dx: isize, dy: isize) {
         let new_col = self.cursor.col as isize + dx;
@@ -222,6 +422,16 @@ impl Spreadsheet {
         }
     }
 
+    /// Moves the cursor to the specified cell address.
+    ///
+    /// This method attempts to move the cursor to a given cell address, specified as a string (e.g., "A1").
+    /// If the address is valid and within the bounds of the spreadsheet, the cursor will be moved to that cell.
+    ///
+    /// # Arguments:
+    /// - `addr`: A string representing the cell address to jump to (e.g., "A1", "B2").
+    ///
+    /// # Returns:
+    /// `true` if the cell address is valid and the cursor is successfully moved, otherwise `false`.
     fn jump_to_cell(&mut self, addr: &str) -> bool {
         if let Some(cell_addr) = CellAddress::from_str(addr) {
             if cell_addr.col < self.max_cols && cell_addr.row < self.max_rows {
@@ -232,6 +442,18 @@ impl Spreadsheet {
         false
     }
 
+    /// Adds a dependency between two cells.
+    ///
+    /// This method records that one cell (the dependent) depends on the value of another cell (the dependency).
+    /// It updates the `dependencies` and `dependents` mappings accordingly.
+    ///
+    /// # Arguments:
+    /// - `dependent`: The address of the cell that depends on another cell.
+    /// - `dependency`: The address of the cell that is being depended on.
+    ///
+    /// # Notes:
+    /// This method will ensure that both the `dependencies` and `dependents` mappings are updated for both
+    /// the dependent and the dependency cells.
     fn add_dependency(&mut self, dependent: &str, dependency: &str) {
         // Record that 'dependent' depends on 'dependency'
         self.dependencies.entry(dependent.to_string())
@@ -246,6 +468,13 @@ impl Spreadsheet {
         println!("DEBUG: Added dependency: {} -> {}", dependent, dependency);
     }
 
+    /// Removes all dependencies related to the given cell address.
+    ///
+    /// This method removes both the cell's dependencies and the cell from the list of dependents of each of its
+    /// dependencies. It is useful when clearing dependencies when a cell's formula is changed or removed.
+    ///
+    /// # Arguments:
+    /// - `cell_addr`: The address of the cell for which to remove dependencies.
     fn remove_dependencies(&mut self, cell_addr: &str) {
         // Remove all dependencies for this cell
         if let Some(deps) = self.dependencies.remove(cell_addr) {
@@ -258,15 +487,19 @@ impl Spreadsheet {
         }
     }
 
+    /// Updates the dependencies for a cell based on its formula.
+    ///
+    /// This method analyzes a cell's formula and updates its dependencies accordingly. The formula can refer to
+    /// other cells directly (e.g., `A1`), ranges of cells (e.g., `SUM(A1:B2)`), or even functions with cell
+    /// references (e.g., `=SUM(A1:B1)`).
+    ///
+    /// # Arguments:
+    /// - `cell_addr`: The address of the cell whose dependencies need to be updated.
+    /// - `formula`: The formula string that defines the dependencies.
     fn update_dependencies(&mut self, cell_addr: &str, formula: &str) {
         println!("DEBUG: Removing dependencies for cell {}", cell_addr);
         // First, remove any existing dependencies
         self.remove_dependencies(cell_addr);
-        
-        // Extract cell references from the formula
-        // let dependencies = self.extract_dependencies(formula);
-        
-        // Add new dependencies
         if formula.starts_with('=') {
 
             let formula = &formula[1..]; // Skip the '=' character
@@ -328,12 +561,17 @@ impl Spreadsheet {
                 }
             }
         }
-        
-        // for dep in dependencies {
-        //     self.add_dependency(cell_addr, &dep);
-        // }
     }
-
+    /// Extracts all cell dependencies from a given formula.
+    ///
+    /// This method parses a formula (e.g., "=A1+B2" or "SUM(A1:B2)") to find all cell references that the formula
+    /// depends on. The formula can include cell references, ranges, or functions that reference other cells.
+    ///
+    /// # Arguments:
+    /// - `formula`: A string representing the formula from which to extract dependencies.
+    ///
+    /// # Returns:
+    /// A `Vec<String>` containing all cell addresses (in string format, e.g., "A1", "B2") that the formula depends on.
     fn extract_dependencies(&self, formula: &str) -> Vec<String> {
         let mut dependencies = Vec::new();
         
@@ -396,36 +634,18 @@ impl Spreadsheet {
         
         dependencies
     }
-
-    // fn propagate_changes(&mut self, cell_addr: &str) {
-    //     // Find all cells that depend on this cell
-    //     let dependents = if let Some(deps) = self.dependents.get(cell_addr) {
-    //         deps.clone()
-    //     } else {
-    //         return;
-    //     };
-        
-    //     // For each dependent, recalculate its value
-    //     for dependent in dependents {
-    //         if let Some(cell) = self.data.get(&dependent) {
-    //             if let Some(formula) = &cell.formula {
-    //                 // Clone the formula to avoid borrowing issues
-    //                 let formula_clone = format!("={}", formula);
-    //                 let addr = if let Some(addr) = CellAddress::from_str(&dependent) {
-    //                     addr
-    //                 } else {
-    //                     continue;
-    //                 };
-                    
-    //                 // Update the cell with its formula, which will recalculate its value
-    //                 self.update_cell(&addr, &formula_clone);
-                    
-    //                 // Recursively propagate changes to cells that depend on this one
-    //                 self.propagate_changes(&dependent);
-    //             }
-    //         }
-    //     }
-    // }
+    /// Propagates changes through the spreadsheet based on cell dependencies.
+    ///
+    /// This method updates all the cells that depend on a given cell. If a cell's value changes, this method
+    /// ensures that all dependent cells are recalculated. It also checks for circular dependencies and avoids
+    /// infinite loops by tracking cells that are currently being updated.
+    ///
+    /// # Arguments:
+    /// - `cell_addr`: A string representing the address of the cell whose changes need to be propagated.
+    ///
+    /// # Notes:
+    /// - If a circular dependency is detected, an error message is shown, and the operation is undone.
+    /// - This method processes each dependent cell recursively to ensure that the entire dependency chain is handled.
     fn propagate_changes(&mut self, cell_addr: &str) {
         // Get all cells that depend on this cell
         let mut dependents_to_process = Vec::new();
@@ -449,30 +669,53 @@ impl Spreadsheet {
                 self.status_message = format!("ERROR: CIRCULAR DEPENDENCY DETECTED WITH {}", dependent);
                 return;
             }
-
-
-            // Get the formula if it exists
             let formula_opt = if let Some(cell) = self.data.get(&dependent) {
                 cell.formula.clone()
             } else {
                 None
             };
-            
-            // If we have a formula, recalculate the cell
             if let Some(formula) = formula_opt {
                 let formula_with_eq = format!("={}", formula);
                 
                 if let Some(addr) = CellAddress::from_str(&dependent) {
                     // Update the cell with its formula to recalculate
                     self.update_cell(&addr, &formula_with_eq, true);
-                    
-                    // We don't need to recursively call propagate_changes here
-                    // because update_cell will handle that for us
                 }
             }
         }
     }
-
+    /// Updates a cell's value in the spreadsheet, recalculates it if necessary, and propagates changes
+/// to dependent cells. This function supports both simple values and complex formulas (such as 
+/// `SUM`, `MIN`, `MAX`, `sqrt`, and `log`). It also checks for circular dependencies and invalid 
+/// formulas, ensuring that the integrity of the spreadsheet is maintained.
+///
+/// # Arguments
+///
+/// * `addr` - A reference to the `CellAddress` of the cell to be updated. This indicates which 
+///   cell in the spreadsheet should be modified.
+/// * `value` - A string representing the new value or formula for the cell. If the value starts 
+///   with `=`, it is considered a formula; otherwise, it's treated as a constant value.
+/// * `multi` - A boolean flag indicating whether this update is part of a multi-cell operation. 
+///   If `multi` is `false`, the function will push the current state to the undo stack to allow 
+///   for future undo operations. If `multi` is `true`, undo history will not be updated.
+///
+/// # Returns
+///
+/// Returns `true` if the cell was updated successfully, and `false` if an error occurred (e.g., 
+/// invalid formula, circular dependency, or locked cell).
+///
+/// # Error Handling
+///
+/// This function performs several checks and sets the `status_message` with an appropriate error 
+/// message if any of the following conditions are met:
+/// 
+/// - The cell doesn't exist (`ERROR: CELL {addr} NOT FOUND`)
+/// - The cell is locked (`ERROR: CELL {addr} LOCKED`)
+/// - A circular dependency is detected (`ERROR: CIRCULAR DEPENDENCY DETECTED EARLY WITH {addr}`)
+/// - An invalid formula is provided, such as an incorrectly formatted range (`ERROR: INVALID RANGE {range}`)
+/// - An invalid arithmetic expression (`ERROR: INVALID ARITHMETIC EXPRESSION {expression}`)
+/// - An invalid function argument (`ERROR: INVALID ARGUMENT {function}`)
+/// - A general invalid formula error (`ERROR: INVALID FORMULA {value}`)
     fn update_cell(&mut self, addr: &CellAddress, value: &str, multi:bool) -> bool {
         // First, check if cell exists and if it's locked
         let cell_exists = self.get_cell(addr).is_some();
@@ -499,13 +742,7 @@ impl Spreadsheet {
         
         // Mark this cell as being updated
         self.currently_updating.insert(cell_addr_str.clone());
-
-        // println!("Debug: Updating cell {} with value {}", addr.to_string(), value);
-        // Save the old cell for undo (clone it before modifying)
         if let Some(old_cell) = self.get_cell(addr).cloned() {
-            // Push to undo stack and clear redo stack
-            // self.push_undo(addr.clone(), old_cell);
-            // self.redo_stack.clear();    
 
             let mut is_valid_formula = false;
             if value.starts_with("=") {
@@ -520,7 +757,7 @@ impl Spreadsheet {
                             let start_exists = self.get_cell(&start).is_some();
                             // println!("Debug: Start cell {} exists: {}", start.to_string(), start_exists);
                             let end_exists = self.get_cell(&end).is_some();
-                            if(!(start_exists && end_exists)) {
+                            if !(start_exists && end_exists) {
                                 self.status_message = format!("ERROR: INVALID RANGE {}", range_str);
                             }
                             start_exists && end_exists
@@ -546,18 +783,48 @@ impl Spreadsheet {
                     let cell_ref = &formula[1..formula.len() - 1];
                     if let Some(addr) = CellAddress::from_str(cell_ref) {
                         self.get_cell(&addr).is_some()
+                    }
+                    else if cell_ref.contains('+') || cell_ref.contains('-') || cell_ref.contains('*') {
+                        // Arithmetic expression like =(A1+B1)
+                        let re = regex::Regex::new(r"([+\-*])").unwrap();
+                        let parts: Vec<&str> = re.split(cell_ref).collect();
+                        
+                        // Check if all parts are valid (either cell references or numbers)
+                        let all_valid = parts.iter().all(|part| {
+                            let trimmed = part.trim();
+                            if trimmed.is_empty() {
+                                return false;
+                            }
+                            
+                            // Check if it's a valid cell reference
+                            if let Some(addr) = CellAddress::from_str(trimmed) {
+                                self.get_cell(&addr).is_some()
+                            } else {
+                                // Check if it's a valid number
+                                trimmed.parse::<f64>().is_ok()
+                            }
+                        });
+                        
+                        if !all_valid {
+                            self.status_message = format!("ERROR: INVALID ARITHMETIC EXPRESSION {}", cell_ref);
+                            false
+                        } else {
+                            true
+                        }
                     } else {
                         self.status_message = format!("ERROR: INVALID CELL REFERENCE {}", cell_ref);
-                         false
+                        false
                     }
+        
                 }
+                
                 else {
                     self.status_message = format!("ERROR: INVALID FORMULA {}", value);
                     false
                 };
             }
             else {
-                if(!multi){
+                if !multi{
                     println!("DEBUG: Pushing undo for cell {}", addr.to_string());
                     self.push_undo_sheet();
                     self.redo_stack.clear(); 
@@ -581,7 +848,7 @@ impl Spreadsheet {
             }
             if is_valid_formula {
                 // Save the old cell for undo (clone it before modifying)
-                if(!multi){
+                if !multi{
                     println!("DEBUG: Pushing undo for cell {}", addr.to_string());
                     self.push_undo_sheet();
                     self.redo_stack.clear(); 
@@ -705,9 +972,11 @@ impl Spreadsheet {
                         0.0
                     }
                 } else if formula.starts_with("(") && formula.ends_with(")") {
-                    println!("DEBUG: Found cell reference in formula");
-                    let cell_ref = &formula[1..formula.len() - 1];
-                    if let Some(addr) = CellAddress::from_str(cell_ref) {
+                    let inside_brackets = &formula[1..formula.len() - 1];
+                    
+                    if let Some(addr) = CellAddress::from_str(inside_brackets) {
+                        // Simple cell reference like =(A1)
+                        println!("DEBUG: Found simple cell reference in formula");
                         if let Some(cell) = self.get_cell(&addr) {
                             if let Ok(value) = cell.display_value.parse::<f64>() {
                                 value
@@ -717,10 +986,58 @@ impl Spreadsheet {
                         } else {
                             0.0
                         }
+                    } else if inside_brackets.contains('+') || inside_brackets.contains('-') || inside_brackets.contains('*') {
+                        // Arithmetic expression like =(A1+B1) or =(A1+1)
+                        println!("DEBUG: Found arithmetic expression in formula: {}", inside_brackets);
+                        
+                        // Find the operator and its position
+                        let mut operator = '+';  // Default
+                        let mut operator_pos = 0;
+                        
+                        for (i, c) in inside_brackets.chars().enumerate() {
+                            if c == '+' || c == '-' || c == '*' {
+                                operator = c;
+                                operator_pos = i;
+                                break;
+                            }
+                        }
+                        
+                        let left_part = &inside_brackets[0..operator_pos].trim();
+                        let right_part = &inside_brackets[operator_pos+1..].trim();
+                        
+                        // Evaluate left operand
+                        let left_value = if let Some(addr) = CellAddress::from_str(left_part) {
+                            if let Some(cell) = self.get_cell(&addr) {
+                                cell.display_value.parse::<f64>().unwrap_or(0.0)
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            left_part.parse::<f64>().unwrap_or(0.0)
+                        };
+                        
+                        // Evaluate right operand
+                        let right_value = if let Some(addr) = CellAddress::from_str(right_part) {
+                            if let Some(cell) = self.get_cell(&addr) {
+                                cell.display_value.parse::<f64>().unwrap_or(0.0)
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            right_part.parse::<f64>().unwrap_or(0.0)
+                        };
+                        
+                        // Perform the operation
+                        match operator {
+                            '+' => left_value + right_value,
+                            '-' => left_value - right_value,
+                            '*' => left_value * right_value,
+                            _ => 0.0  // Should not reach here due to validation
+                        }
                     } else {
+                        println!("DEBUG: Invalid content in brackets: {}", inside_brackets);
                         0.0
                     }
-                    
                 }
                 else {
                     0.0
@@ -748,96 +1065,22 @@ impl Spreadsheet {
         
         return true;
     }
-            
-            // Now update the cell (we're done with operations that need to borrow self)
-            
-    //         if let Some(mut cell) = self.get_cell_mut(addr) {
-    //             // Handle formula
-    //             if value.starts_with("=") {
-    //                 // Validate formula
-    //                 let formula = &value[1..];
-    //                 // let is_valid_formula = if formula.starts_with("SUM(") || formula.starts_with("MIN(") || formula.starts_with("MAX(") || formula.starts_with("STDEV(") {
-    //                 //     if let Some(range_str) = formula.strip_prefix("SUM(").or_else(|| formula.strip_prefix("MIN("))
-    //                 //         .or_else(|| formula.strip_prefix("MAX(")).or_else(|| formula.strip_prefix("STDEV("))
-    //                 //         .and_then(|s| s.strip_suffix(')')) {
-    //                 //         if let Some((start, end)) = self.parse_range(range_str) {
-    //                 //             let start_exists = self.get_cell(&start).is_some();
-    //                 //             let end_exists = self.get_cell(&end).is_some();
-    //                 //             start_exists && end_exists
-    //                 //         } else {
-    //                 //             false
-    //                 //         }
-    //                 //     } else {
-    //                 //         false
-    //                 //     }
-    //                 // } else if formula.starts_with("sqrt(") || formula.starts_with("log(") {
-    //                 //     if let Some(arg) = formula.strip_prefix("sqrt(").or_else(|| formula.strip_prefix("log("))
-    //                 //         .and_then(|s| s.strip_suffix(')')) {
-    //                 //         CellAddress::from_str(arg).map_or(false, |addr| self.get_cell(&addr).is_some()) || arg.parse::<f64>().is_ok()
-    //                 //     } else {
-    //                 //         false
-    //                 //     }
-    //                 // } else {
-    //                 //     false
-    //                 // };
 
-    //                 if !is_valid_formula {
-    //                     self.status_message = format!("ERROR: INVALID FORMULA {}", value);
-    //                     return false;
-    //                 }
-                        
-    //                 cell.formula = Some(value[1..].to_string());
-    //                 cell.raw_value = value.to_string();
-    //                 // For now, just use formula as display value
-    //                 cell.display_value = value.to_string();
-    //             } else {
-    //                 // println!("Debug :Updating cell {} with value {}", addr.to_string(), value);
-                    
-    //                 cell.formula = None;
-    //                 cell.raw_value = value.to_string();
-    //                 cell.display_value = value.to_string();
-
-    //                 // println!("Debug: Cell {} updated to {}", addr.to_string(), cell.display_value);
-    //             }
-    //             return true;
-    //         }
-    //     }
-        
-    //     false
-    // }
-    // fn push_undo_sheet(&mut self) {
-    //     // Create a copy of the entire sheet as individual cell actions
-    //     let mut sheet_action = SheetAction {
-    //         cells: Vec::new(),
-    //     };
-        
-    //     // Add all cells to the action
-    //     for (addr_str, cell) in &self.data {
-    //         if let Some(addr) = CellAddress::from_str(addr_str) {
-    //             sheet_action.cells.push(UndoAction {
-    //                 cell_address: addr,
-    //                 old_cell: cell.clone(),
-    //             });
-    //         }
-    //     }
-        
-    //     // Maintain max 3 undo steps
-    //     if self.undo_stack.len() >= 3 {
-    //         // Remove oldest actions
-    //         let actions_to_remove = sheet_action.cells.len();
-    //         for _ in 0..actions_to_remove {
-    //             if !self.undo_stack.is_empty() {
-    //                 self.undo_stack.pop_front();
-    //             }
-    //         }
-    //     }
-        
-    //     // Add all cells to the undo stack
-    //     for cell_action in sheet_action.cells {
-    //         self.undo_stack.push_back(cell_action);
-    //     }
-    // }
-
+    /// Pushes a single undo action to the undo stack for a specific cell update. This action stores
+/// the previous state of the cell so that it can be reverted during an undo operation.
+///
+/// The undo stack is capped at 3 actions, and older actions are discarded when this limit is exceeded.
+///
+/// # Arguments
+///
+/// * `addr` - The `CellAddress` of the cell that was updated.
+/// * `old_cell` - A `Cell` representing the state of the cell before the update.
+///
+/// # Notes
+///
+/// The undo stack is maintained in a way that only a limited number of undo actions are stored
+/// at any given time. If the stack reaches its limit, the oldest action is discarded to make room
+/// for new actions.
     fn push_undo(&mut self, addr: CellAddress, old_cell: Cell) {
         // Maintain max 3 undo steps
         if self.undo_stack.len() >= 3 {
@@ -849,46 +1092,18 @@ impl Spreadsheet {
         });
     }
 
-    // fn undo(&mut self) -> bool {
-    //     if let Some(action) = self.undo_stack.pop_back() {
-    //         // Save current state for redo
-    //         if let Some(cell) = self.get_cell(&action.cell_address) {
-    //             // Push to redo stack
-    //             self.redo_stack.push_back(UndoAction {
-    //                 cell_address: action.cell_address.clone(),
-    //                 old_cell: cell.clone()
-    //             });
-                
-    //             // Apply the undo
-    //             if let Some(target_cell) = self.get_cell_mut(&action.cell_address) {
-    //                 *target_cell = action.old_cell;
-    //                 self.status_message = "UNDO APPLIED".to_string();
-    //                 return true;
-    //             }
-    //         }
-    //     }
-    //     self.status_message = "NOTHING TO UNDO".to_string();
-    //     false
-    // }
-
-    // fn redo(&mut self) -> bool {
-    //     if let Some(action) = self.redo_stack.pop_back() {
-    //         // Save current state for undo
-    //         if let Some(cell) = self.get_cell(&action.cell_address) {
-    //             // Push to undo stack
-    //             self.push_undo(action.cell_address.clone(), cell.clone());
-                
-    //             // Apply the redo
-    //             if let Some(target_cell) = self.get_cell_mut(&action.cell_address) {
-    //                 *target_cell = action.old_cell;
-    //                 self.status_message = "REDO APPLIED".to_string();
-    //                 return true;
-    //             }
-    //         }
-    //     }
-    //     self.status_message = "NOTHING TO REDO".to_string();
-    //     false
-    // }
+    /// Pushes the entire sheet's state to the undo stack. This operation adds all current cells in
+/// the sheet to the undo stack so that the entire sheet can be reverted in a single undo operation.
+///
+/// The undo stack is capped at 3 actions, and older actions are discarded when this limit is exceeded.
+/// If the undo stack already contains 3 actions, it is cleared before adding a new action.
+///
+/// # Example
+///
+/// # Notes
+///
+/// This operation clears the undo stack when adding the first action if the cell at address `A1`
+/// is present in the data and the undo stack already has 3 actions.
     fn push_undo_sheet(&mut self) {
         // Add all cells to the undo stack
         for (addr_str, cell) in &self.data {
@@ -905,7 +1120,15 @@ impl Spreadsheet {
             }
         }
     }
-
+    /// Undoes the last action applied to the sheet. If the undo stack is empty, a message is set
+/// indicating that there is nothing to undo.
+///
+/// The state of the sheet is reverted to the state it was in before the last action. The undone
+/// actions are then moved to the redo stack, allowing them to be reapplied later using the redo function.
+///
+/// # Returns
+///
+/// Returns `true` if the undo operation was successfully applied, or `false` if there was nothing to undo.
     fn undo(&mut self) -> bool {
         // Check if we have any actions to undo
         if self.undo_stack.is_empty() {
@@ -946,7 +1169,15 @@ impl Spreadsheet {
         self.status_message = "UNDO APPLIED".to_string();
         true
     }
-
+    /// Redoes the last undone action. If the redo stack is empty, a message is set indicating that
+/// there is nothing to redo.
+///
+/// The state of the sheet is restored to the state it was in before the undo operation. The redone
+/// actions are then moved back to the undo stack, allowing them to be undone again if needed.
+///
+/// # Returns
+///
+/// Returns `true` if the redo operation was successfully applied, or `false` if there was nothing to redo.
     fn redo(&mut self) -> bool {
         // Check if we have any actions to redo
         if self.redo_stack.is_empty() {
@@ -987,7 +1218,13 @@ impl Spreadsheet {
         self.status_message = "REDO APPLIED".to_string();
         true
     }
-
+    /// Recalculates the dependencies and dependents for all cells based on their formulas. 
+/// This method clears any existing dependency and dependent mappings, and then rebuilds 
+/// them by parsing the formulas of all cells.
+///
+/// It extracts dependencies from the formulas and updates two mappings:
+/// - `dependencies`: Maps each cell to a set of cells it depends on.
+/// - `dependents`: Maps each cell to a set of cells that depend on it.
     fn recalculate_dependencies(&mut self) {
         // Clear existing dependencies
         self.dependencies.clear();
@@ -1012,7 +1249,18 @@ impl Spreadsheet {
             }
         }
     }
-
+    /// Locks a specific cell, preventing its value from being modified until it is unlocked.
+/// If no address is provided, the currently selected cell (cursor) will be locked.
+///
+/// # Arguments
+///
+/// * `addr` - An optional string slice representing the cell's address to be locked. If not provided,
+///   the currently selected cell is locked.
+///
+/// # Returns
+///
+/// Returns `true` if the cell was successfully locked, or `false` if the cell could not be locked 
+/// (e.g., invalid address).
     fn lock_cell(&mut self, addr: Option<&str>) -> bool {
         let addr = if let Some(a) = addr {
             if let Some(cell_addr) = CellAddress::from_str(a) {
@@ -1032,7 +1280,18 @@ impl Spreadsheet {
             false
         }
     }
-
+/// Unlocks a specific cell, allowing its value to be modified. If no address is provided, 
+/// the currently selected cell (cursor) will be unlocked.
+///
+/// # Arguments
+///
+/// * `addr` - An optional string slice representing the cell's address to be unlocked. If not provided,
+///   the currently selected cell is unlocked.
+///
+/// # Returns
+///
+/// Returns `true` if the cell was successfully unlocked, or `false` if the cell could not be unlocked 
+/// (e.g., invalid address).
     fn unlock_cell(&mut self, addr: Option<&str>) -> bool {
         let addr = if let Some(a) = addr {
             if let Some(cell_addr) = CellAddress::from_str(a) {
@@ -1052,7 +1311,22 @@ impl Spreadsheet {
             false
         }
     }
-
+/// Sets the alignment of a specific cell. The alignment can be set to left, right, or center.
+/// If no address is provided, the currently selected cell (cursor) will be modified.
+///
+/// # Arguments
+///
+/// * `addr` - An optional string slice representing the cell's address. If not provided,
+///   the currently selected cell is used.
+/// * `align` - A string that specifies the alignment. Possible values are:
+///   - `"l"` for left alignment
+///   - `"r"` for right alignment
+///   - `"c"` for center alignment
+///
+/// # Returns
+///
+/// Returns `true` if the alignment was successfully changed, or `false` if the address is invalid,
+/// the cell is locked, or the alignment value is invalid.
     fn set_alignment(&mut self, addr: Option<&str>, align: &str) -> bool {
         let addr = if let Some(a) = addr {
             if let Some(cell_addr) = CellAddress::from_str(a) {
@@ -1084,7 +1358,22 @@ impl Spreadsheet {
             false
         }
     }
-
+/// Sets the height and width for a specific cell. If no address is provided, the currently selected 
+/// cell (cursor) will be modified. The height and width can be adjusted independently.
+///
+/// # Arguments
+///
+/// * `addr` - An optional string slice representing the cell's address. If not provided,
+///   the currently selected cell is used.
+/// * `height` - An optional `usize` representing the height of the cell. If not provided, the height
+///   will not be changed.
+/// * `width` - An optional `usize` representing the width of the cell. If not provided, the width
+///   will not be changed.
+///
+/// # Returns
+///
+/// Returns `true` if the dimension was successfully changed, or `false` if the address is invalid,
+/// the cell is locked, or invalid dimensions were provided.
     fn set_dimension(&mut self, addr: Option<&str>, height: Option<usize>, width: Option<usize>) -> bool {
         println!("Debug: Setting dimension for cell {:?}", addr);
         let addr = if let Some(a) = addr {
@@ -1119,7 +1408,17 @@ impl Spreadsheet {
             false
         }
     }
-
+/// Searches for a query string within all cells in the spreadsheet. If any cells contain the query,
+/// their addresses will be stored as matches.
+///
+/// # Arguments
+///
+/// * `query` - The string to search for in the cell values.
+///
+/// # Returns
+///
+/// Returns `true` if one or more matches are found, and sets the cursor to the first match. 
+/// Returns `false` if no matches are found.
     fn find(&mut self, query: &str) -> bool {
         self.find_matches.clear();
         self.find_query = query.to_string();
@@ -1146,7 +1445,12 @@ impl Spreadsheet {
             false
         }
     }
-
+/// Navigates to the next matching cell in the find results. The cursor will be updated to the next
+/// match in the list of search results.
+///
+/// # Returns
+///
+/// Returns `true` if a match is found and the cursor is updated. Returns `false` if no matches have been found.
     fn find_next(&mut self) -> bool {
         if self.find_matches.is_empty() {
             return false;
@@ -1156,7 +1460,12 @@ impl Spreadsheet {
         self.cursor = self.find_matches[self.current_find_match].clone();
         true
     }
-
+/// Navigates to the previous matching cell in the find results. The cursor will be updated to the previous
+/// match in the list of search results.
+///
+/// # Returns
+///
+/// Returns `true` if a match is found and the cursor is updated. Returns `false` if no matches have been found.
     fn find_prev(&mut self) -> bool {
         if self.find_matches.is_empty() {
             return false;
@@ -1172,6 +1481,17 @@ impl Spreadsheet {
         true
     }
 
+    /// Parses a range string in the format "A1:B5" into two `CellAddress` objects representing
+/// the starting and ending cell addresses. If the format is invalid, returns `None`.
+///
+/// # Arguments
+///
+/// * `range_str` - A string representing the range to parse (e.g., "A1:B5").
+///
+/// # Returns
+///
+/// Returns an `Option` containing a tuple of `CellAddress` objects for the start and end cells if valid,
+/// or `None` if the format is invalid or the cell addresses cannot be parsed.
     fn parse_range(&self, range_str: &str) -> Option<(CellAddress, CellAddress)> {
         let parts: Vec<&str> = range_str.split(':').collect();
         if parts.len() != 2 {
@@ -1183,7 +1503,21 @@ impl Spreadsheet {
         
         Some((start, end))
     }
-
+/// Inserts a specified value into a range of cells. The range is parsed from the `range_str`
+/// argument (e.g., "A1:B3"), and the value is inserted into all cells within that range. 
+/// The undo stack is updated before any changes are made.
+///
+/// # Arguments
+///
+/// * `range_str` - A string representing the range to insert the value into (e.g., "A1:B3").
+/// * `value` - The value to insert into the specified range of cells.
+///
+/// # Returns
+///
+/// Returns `true` if the value was successfully inserted into the specified range, or `false` if:
+/// - The range is invalid.
+/// - Any of the cells in the range are locked (the update will skip locked cells).
+/// - An error occurs while processing the range.
     fn multi_insert(&mut self, range_str: &str, value: &str) -> bool {
         // Remove brackets if present
         let range_str = range_str.trim_start_matches('[').trim_end_matches(']');
@@ -1212,21 +1546,32 @@ impl Spreadsheet {
             false
         }
     }
-
+/// Saves the current spreadsheet data as a JSON file to the specified path.
+///
+/// # Arguments
+///
+/// * `path` - The path where the JSON file should be saved.
+///
+/// # Returns
+///
+/// Returns `io::Result<()>`, which will be `Ok` if the file is written successfully, or an error if
+/// there is an issue with creating or writing to the file.
     fn save_json(&self, path: &Path) -> io::Result<()> {
         let file = File::create(path)?;
         let writer = BufWriter::new(file);
         serde_json::to_writer_pretty(writer, &self.data)?;
         Ok(())
     }
-
-    // fn load_json(&mut self, path: &Path) -> io::Result<()> {
-    //     let file = File::open(path)?;
-    //     let reader = BufReader::new(file);
-    //     self.data = serde_json::from_reader(reader)?;
-    //     Ok(())
-    // }
-
+/// Loads spreadsheet data from a JSON file at the specified path.
+///
+/// # Arguments
+///
+/// * `path` - The path to the JSON file containing the spreadsheet data.
+///
+/// # Returns
+///
+/// Returns `io::Result<()>`, which will be `Ok` if the file is read and the data is successfully loaded,
+/// or an error if the file cannot be opened or the data cannot be parsed.
     fn load_json(&mut self, path: &Path) -> io::Result<()> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
@@ -1269,60 +1614,30 @@ impl Spreadsheet {
         
         Ok(())
     }
-
-    // fn sort_range(&mut self, range_str: &str, ascending: bool) -> bool {
-    //     // Remove brackets if present
-    //     let range_str = range_str.trim_start_matches('[').trim_end_matches(']');
-    
-    //     if let Some((start, end)) = self.parse_range(range_str) {
-    //         let col = start.col;
-    //         let start_row = start.row;
-    //         let end_row = end.row;
-    
-    //         // Collect full rows with the value in the sort column
-    //         let mut rows: Vec<(usize, Vec<Cell>)> = Vec::new();
-    
-    //         for row in start_row..=end_row {
-    //             let mut row_cells = Vec::new();
-    //             for c in 0..unsafe{ C} {
-    //                 let addr = CellAddress::new(c, row);
-    //                 if let Some(cell) = self.get_cell(&addr).cloned() {
-    //                     row_cells.push(cell);
-    //                 } else {
-    //                     row_cells.push(Cell::default()); // fallback empty cell
-    //                 }
-    //             }
-    //             rows.push((row, row_cells));
-    //         }
-    
-    //         // Sort rows based on value in the specified column
-    //         rows.sort_by(|a, b| {
-    //             let val_a = &a.1[col].display_value;
-    //             let val_b = &b.1[col].display_value;
-    //             let result = val_a.cmp(val_b);
-    //             if ascending { result } else { result.reverse() }
-    //         });
-    
-    //         // Apply sorted rows back
-    //         for (i, (_, row_cells)) in rows.into_iter().enumerate() {
-    //             let new_row = start_row + i;
-    //             for (c, cell) in row_cells.into_iter().enumerate() {
-    //                 let addr = CellAddress::new(c, new_row);
-    //                 if let Some(target) = self.get_cell_mut(&addr) {
-    //                     if !target.is_locked {
-    //                         *target = cell;
-    //                     }
-    //                 }
-    //             }
-    //         }
-    
-    //         self.status_message = "ROW SORT APPLIED".to_string();
-    //         true
-    //     } else {
-    //         self.status_message = "INVALID RANGE".to_string();
-    //         false
-    //     }
-    // }
+/// Sorts the rows within a specified range of cells based on the values in a given column. The rows
+/// can be sorted in either ascending or descending order.
+///
+/// # Arguments
+///
+/// * `range_str` - A string representing the range to sort (e.g., "A1:B5").
+/// * `ascending` - A boolean flag indicating the sort order. `true` for ascending, `false` for descending.
+///
+/// # Returns
+///
+/// Returns `true` if the sorting operation was successful, or `false` if:
+/// - The range is invalid.
+/// - An error occurs during the sorting process.
+///
+/// # Notes
+///
+/// The function performs the following steps:
+/// 1. Extracts the range of cells to be sorted from the provided string.
+/// 2. Sorts the rows based on the values in the specified column, comparing first by numeric value (if possible),
+///    and then by string value.
+/// 3. Applies the sorted rows back to the sheet.
+/// 4. The undo stack is updated before sorting, and the redo stack is cleared.
+///
+/// If a cell is locked, it will not be modified during the sorting operation.
     fn sort_range(&mut self, range_str: &str, ascending: bool) -> bool {
         // Remove brackets if present
         let range_str = range_str.trim_start_matches('[').trim_end_matches(']');
@@ -1392,7 +1707,23 @@ impl Spreadsheet {
             false
         }
     }
-
+/// Formats the value of a cell for display, taking into account its width and alignment.
+///
+/// # Arguments
+///
+/// * `addr` - A reference to the `CellAddress` of the cell whose value is to be formatted.
+///
+/// # Returns
+///
+/// Returns a `String` containing the formatted cell value, which may be truncated to fit the cell's width
+/// and padded according to the specified alignment (left, right, or center).
+/// # Notes
+///
+/// This function formats the value of the cell to fit within the defined width:
+/// - If the cell's value exceeds its width, it will be truncated with an ellipsis (`..`) if there's enough space.
+/// - The cell's value will be padded with spaces based on its alignment (left, right, or center).
+///
+/// If the width is too small to display any part of the value, the cell will display a series of periods (`"."`).
     fn format_cell_value(&self, addr: &CellAddress) -> String {
         let cell = self.get_cell(addr).clone().unwrap() else {
             return String::new(); // Return empty string if cell not found
@@ -1424,7 +1755,36 @@ impl Spreadsheet {
             }
         }
     }
-
+/// Exports the spreadsheet data to a PDF file with formatted content including rows, columns, and cell values.
+///
+/// The export includes the following features:
+/// - Data from the spreadsheet is formatted in a table-like structure with row numbers and column headers.
+/// - Content is split into multiple pages if there are more rows than can fit on one page.
+/// - Page numbers are included in the footer (e.g., "Page 1 of 3").
+///
+/// # Arguments
+///
+/// * `filename` - The name of the output PDF file. This is where the PDF will be saved.
+///
+/// # Returns
+///
+/// Returns a `Result<(), io::Error>`. On success, it returns `Ok(())`. On failure, it returns an `Err`
+/// with the error details.
+///
+/// # Notes
+///
+/// This function does the following:
+/// 1. Creates a new PDF document with A4 page dimensions.
+/// 2. Iterates through the spreadsheet data and splits it across pages if needed.
+/// 3. Draws the column headers and row numbers on each page.
+/// 4. Writes the cell values within the table format, considering cell width and row height.
+/// 5. Adds page numbers to the bottom of each page (e.g., "Page X of Y").
+/// 6. Saves the PDF document to the provided file path.
+///
+/// The resulting PDF will have the following layout:
+/// - Each page shows a part of the table with row numbers on the left, followed by columns A to J.
+/// - The table content will be truncated if the width of the columns exceeds the page width.
+/// - The rows will be adjusted to fit within the available content height on each page.
     fn export_to_pdf(&self, filename: &str) -> Result<()> {
         // Create a new PDF document
         let (mut doc, page1, layer1) = PdfDocument::new("Spreadsheet Export", Mm(210.0), Mm(297.0), "Layer 1");
@@ -1532,7 +1892,49 @@ impl Spreadsheet {
         
         Ok(())
     }
-
+/// Processes and executes a command entered by the user.
+///
+/// This function interprets a variety of user commands, changing the state of the spreadsheet 
+/// or performing specific actions based on the command entered. It handles commands related to 
+/// cell manipulation, navigation, file operations, and special features like "haunting".
+///
+/// # Command Syntax
+/// - Commands can be entered in the form of single-letter abbreviations or with parameters, 
+///   e.g., `i cell_name`, `find search_term`, `sort range ascending_flag`, etc.
+/// - Commands that are not recognized will display an "INVALID COMMAND" status message.
+///
+/// # Command List
+/// - `"q"`: Quit the application.
+/// - `"i [cell]"`: Enter insert mode at the specified cell (or current cell if no cell specified).
+/// - `"j [cell]"`: Jump to the specified cell.
+/// - `"undo"`: Undo the last operation.
+/// - `"redo"`: Redo the last undone operation.
+/// - `"find [search_term]"`: Enter find mode with the specified search term.
+/// - `"mi [start] [end]"`: Multi-insert command for a range of values.
+/// - `"lock [cell]"`: Lock the specified cell, or lock the current cell if no cell is specified.
+/// - `"unlock [cell]"`: Unlock the specified cell, or unlock the current cell if no cell is specified.
+/// - `"align [alignment]"`: Set alignment for the current cell or a specified cell.
+/// - `"dim [cell] (height,width)"`: Set dimensions (height and width) for a cell.
+/// - `"sort [range] [ascending_flag]"`: Sort a range of cells in ascending or descending order.
+/// - `"saveas_<format> [filename]"`: Save the spreadsheet as the specified format (e.g., JSON or PDF).
+/// - `"load [filename]"`: Load a spreadsheet from a file.
+/// - `"hh"`: Go to the leftmost cell in the current row.
+/// - `"ll"`: Go to the rightmost cell in the current row.
+/// - `"jj"`: Go to the bottommost cell in the current column.
+/// - `"kk"`: Go to the topmost cell in the current column.
+/// - `"haunt"`: Enable haunting mode, play a sound, and display a haunting message.
+/// - `"dehaunt"`: Disable haunting mode and stop the sound if it's playing.
+///
+/// # Arguments
+///
+/// This function takes no arguments but relies on the `command_buffer` property of the struct to
+/// capture the user input.
+///
+/// # Returns
+///
+/// Returns a boolean value, always `true`, indicating that the process will continue running 
+/// unless the user enters the "q" command (which causes the function to return `false`).
+///
     fn process_command(&mut self) -> bool {
         // First, copy the command buffer to a local String to avoid borrowing issues
         let cmd = self.command_buffer.trim().to_string();
@@ -1726,13 +2128,66 @@ impl Spreadsheet {
         } else if cmd == "kk" {
             // Go to top cell in column
             self.cursor.row = 0;
+        }  else if cmd == "haunt" {
+            self.haunted = true;
+        
+            // WSL-friendly sound playback
+            let windows_path = r#"C:\Users\gupta\OneDrive\Documents\COP290\Rust_lab\scary-scream-3-81274.wav"#; 
+            play_sound(windows_path);
+        
+            self.status_message = "👻 You are being haunted...".to_string();
+        } else if cmd == "dehaunt" {
+            self.haunted = false;
+        
+            if let Some(sink) = &self.haunt_sink {
+                sink.stop(); // stop playback
+            }
+        
+            self.haunt_sink = None;
+            self.haunt_stream = None;
+            self.status_message = "🧹 Haunting ended.".to_string();
         } else {
             self.status_message = "INVALID COMMAND".to_string();
         }
         
         true // Continue running
     }
-
+/// Handles key events based on the current mode of the application.
+///
+/// This function processes the key presses based on the current mode of the application 
+/// (Normal, Insert, Command, or Find mode). It handles cursor movements, inserting values, 
+/// running commands, and more.
+///
+/// # Mode Behavior
+/// - **Normal Mode**: 
+///     - `h`, `j`, `k`, `l` to move the cursor left, down, up, and right respectively.
+///     - `w`, `a`, `s`, `d` to scroll the view.
+///     - `:` to switch to Command Mode.
+///     - `q` to quit the application.
+/// - **Insert Mode**: 
+///     - `Esc` to switch back to Normal Mode.
+///     - `Enter` to apply the changes to the cell and return to Normal Mode.
+///     - `Backspace` to remove the last character from the command buffer.
+///     - Any character is inserted into the command buffer.
+/// - **Command Mode**: 
+///     - `Esc` to return to Normal Mode.
+///     - `Enter` to execute the command from the buffer and return to Normal Mode.
+///     - `Backspace` to remove the last character from the command buffer.
+///     - Any character is added to the command buffer.
+/// - **Find Mode**: 
+///     - `Esc` to return to Normal Mode and clear the find matches.
+///     - `n` to find the next match.
+///     - `p` to find the previous match.
+///
+/// # Arguments
+/// 
+/// * `key` - The key that was pressed (of type `KeyCode`), which is processed based on the current mode.
+///
+/// # Returns
+/// 
+/// Returns a boolean value:
+/// - `true` to continue running the application.
+/// - `false` if the user pressed `q` in Normal Mode (to quit the application).
     fn handle_key_event(&mut self, key: KeyCode) -> bool {
         match self.mode {
             Mode::Normal => {
@@ -1848,6 +2303,29 @@ impl Spreadsheet {
         
         true // Continue running
     }
+    /// Draws the spreadsheet grid and related UI elements to the terminal.
+///
+/// This function is responsible for rendering the spreadsheet's grid, including:
+/// - Row and column headers
+/// - The cells' contents, with appropriate formatting and spacing
+/// - The cursor position (highlighted)
+/// - A status bar that shows information about the current cell
+/// - A status message and command buffer, if available
+///
+/// The screen is cleared at the beginning, and the entire grid is redrawn, ensuring
+/// that any changes (like cursor movement, updated cell content, or mode transitions) 
+/// are reflected in the UI. This function works with a terminal-based UI and uses 
+/// `terminal` and `cursor` functionalities to move the cursor and clear the screen.
+///
+/// # Arguments
+/// 
+/// * `stdout` - The output stream for writing terminal content, typically the terminal's standard output.
+/// 
+/// # Returns
+/// 
+/// Returns an `io::Result<()>`:
+/// - `Ok(())` if the drawing was successful.
+/// - `Err(e)` if an I/O error occurred during the process.
     fn draw(&self, stdout: &mut io::Stdout) -> io::Result<()> {
         // Clear screen
         stdout.execute(terminal::Clear(ClearType::All))?;
@@ -1897,7 +2375,12 @@ impl Spreadsheet {
     
         write!(stdout, "\r\n")?;
     
-        
+        if self.haunted && rand::random::<u8>() % 100 == 0 {
+            stdout.execute(SetForegroundColor(Color::Red))?;
+            write!(stdout, "{}", "👻")?;
+            stdout.execute(SetForegroundColor(Color::Reset))?;
+        }
+
         // Draw grid rows
         for row in unsafe { START_ROW..(START_ROW + 10).min(unsafe { R }) } {
             // Row label - always in a fixed-width column
@@ -1982,7 +2465,32 @@ impl Spreadsheet {
         Ok(())
     }
 }
-
+/// Main function to initialize and run the extended spreadsheet application.
+///
+/// This function sets up the terminal in raw mode and creates a spreadsheet with a configurable
+/// size (determined by command-line arguments). It runs a main event loop where the current state
+/// of the spreadsheet is drawn and user input is handled to manipulate the spreadsheet. The loop
+/// continues until the user decides to quit. Once the program ends, the terminal is cleaned up, 
+/// and the cursor is restored.
+///
+/// # Command-Line Arguments
+/// 
+/// The program expects two command-line arguments:
+/// - `<rows>`: The number of rows in the spreadsheet. Defaults to `10` if not provided.
+/// - `<cols>`: The number of columns in the spreadsheet. Defaults to `10` if not provided.
+/// 
+/// If the number of arguments provided is incorrect, the program will display an error message and
+/// default to a 10x10 grid.
+///
+/// # Behavior
+/// - The terminal is cleared, raw mode is enabled, and the cursor is hidden to allow custom rendering.
+/// - The event loop waits for key events to handle user input (e.g., navigating the spreadsheet or editing cells).
+/// - The loop continues until the user exits (via the `handle_key_event` method returning `false`).
+/// - Upon exit, the terminal is restored, the cursor is shown again, and the screen is cleared.
+///
+/// # Terminal Settings
+/// - Raw mode is enabled with `terminal::enable_raw_mode()`, which allows direct control over input and output.
+/// - The cursor is hidden initially and shown again upon exit to maintain the custom UI.
 pub fn run_extended() -> Result<()> {
     // Setup terminal
 
@@ -2028,7 +2536,6 @@ pub fn run_extended() -> Result<()> {
     stdout.execute(cursor::Show)?; // Show cursor again
     stdout.execute(terminal::Clear(ClearType::All))?;
     stdout.execute(cursor::MoveTo(0, 0))?;
-    
-    println!("Thank you for using the Vim-like Spreadsheet!");
+
     Ok(())
 }
