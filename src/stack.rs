@@ -1,6 +1,6 @@
+use crate::cell::*;
 use std::cell::RefCell;
 use std::rc::Rc;
-use crate::cell::*;
 
 /// Type alias for shared, mutable reference to a `Cell`
 // pub type CellRef = Rc<RefCell<Cell>>;
@@ -22,9 +22,9 @@ impl StackNode {
 }
 
 /// Push to the dependents stack of a cell
-pub fn push_dependent(cell: &CellRef, dep: CellRef) {
+pub fn push_dependent(cell: &CellRef, dep: &CellRef) {
     let mut c = cell.borrow_mut();
-    let new_node = StackNode::new(dep, c.dependents.clone());
+    let new_node = StackNode::new(dep.clone(), c.dependents.clone());
     c.dependents = new_node;
 }
 
@@ -67,33 +67,3 @@ pub fn pop(stack: &mut StackLink) -> Option<CellRef> {
     *stack = next;
     Some(cell)
 }
-
-// Clears the dependents stack of a cell
-// pub fn free_dependents(cell: &CellRef) {
-//     let mut c = cell.borrow_mut();
-//     c.dependents = None;
-// }
-// Prints the contents of a StackLink
-// pub fn print_stack(stack: &StackLink) {
-//     let mut current = stack.clone();
-//     let mut index = 0;
-
-//     // println!("Contents of stack '{}':", name);
-
-//     while let Some(node) = current {
-//         let node_ref = node.borrow();
-//         // let cell = node_ref.cell.borrow();
-//         // println!(
-//         //     "  [{}] -> Cell(val: {}, expr: '{}')",
-//         //     index, cell.val, cell.expression
-//         // );
-//         current = node_ref.next.clone();
-//         index += 1;
-//     }
-
-//     if index == 0 {
-//         // println!("  (Stack is empty)");
-//     }
-// }
-
-
