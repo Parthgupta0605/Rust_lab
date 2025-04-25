@@ -1,7 +1,7 @@
+use crate::cell::*;
 use std::cell::RefCell;
 use std::cmp::max;
 use std::rc::Rc;
-use crate::cell::*;
 // use crate::stack::*;
 pub type Link = Option<Rc<RefCell<AvlNode>>>;
 // type CellRef = Rc<RefCell<Cell>>;
@@ -39,7 +39,9 @@ impl SheetData {
     }
 
     pub fn calculate_row_col(&self, target: &CellRef) -> Option<(usize, usize)> {
-        self.flat.iter().position(|c| Rc::ptr_eq(c, target))
+        self.flat
+            .iter()
+            .position(|c| Rc::ptr_eq(c, target))
             .map(|i| (i / self.sheet[0].len(), i % self.sheet[0].len()))
     }
 }
@@ -62,21 +64,13 @@ impl AvlNode {
     }
 }
 
-// fn calculate_row_col(cell: &Rc<RefCell<Cell>>, sheet: &Sheet) -> Option<(usize, usize)> {
-//     for (i, row) in sheet.iter().enumerate() {
-//         for (j, c) in row.iter().enumerate() {
-//             if Rc::ptr_eq(cell, c) {
-//                 return Some((i, j));
-//             }
-//         }
-//     }
-//     None
-// }
-
-fn compare_cells(a: &Rc<RefCell<Cell>>, b: &Rc<RefCell<Cell>>, sheet_data: &SheetData) -> std::cmp::Ordering {
+fn compare_cells(
+    a: &Rc<RefCell<Cell>>,
+    b: &Rc<RefCell<Cell>>,
+    sheet_data: &SheetData,
+) -> std::cmp::Ordering {
     let (a_row, a_col) = sheet_data.calculate_row_col(a).unwrap();
     let (b_row, b_col) = sheet_data.calculate_row_col(b).unwrap();
-    // let (b_row, b_col) = calculate_row_col(b, sheet).unwrap();
 
     match a_row.cmp(&b_row) {
         std::cmp::Ordering::Equal => a_col.cmp(&b_col),
@@ -150,12 +144,11 @@ fn rotate_left(x: Rc<RefCell<AvlNode>>) -> Rc<RefCell<AvlNode>> {
     y
 }
 
-
 pub fn insert(node: Link, cell: Rc<RefCell<Cell>>, sheet_data: &SheetData) -> Link {
     if let Some(n) = node {
         let cmp;
         {
-            let n_borrow = n.borrow();
+            let n_borrow = n.borrow_mut();
             cmp = compare_cells(&cell, &n_borrow.cell, sheet_data);
         }
         {
@@ -177,21 +170,33 @@ pub fn insert(node: Link, cell: Rc<RefCell<Cell>>, sheet_data: &SheetData) -> Li
         let right = n.borrow().right.clone();
 
         // LL Case
-        if balance > 1 && compare_cells(&cell, &left.as_ref().unwrap().borrow().cell, sheet_data) == std::cmp::Ordering::Less {
+        if balance > 1
+            && compare_cells(&cell, &left.as_ref().unwrap().borrow().cell, sheet_data)
+                == std::cmp::Ordering::Less
+        {
             return Some(rotate_right(n));
         }
         // RR Case
-        if balance < -1 && compare_cells(&cell, &right.as_ref().unwrap().borrow().cell, sheet_data) == std::cmp::Ordering::Greater {
+        if balance < -1
+            && compare_cells(&cell, &right.as_ref().unwrap().borrow().cell, sheet_data)
+                == std::cmp::Ordering::Greater
+        {
             return Some(rotate_left(n));
         }
         // LR Case
-        if balance > 1 && compare_cells(&cell, &left.as_ref().unwrap().borrow().cell, sheet_data) == std::cmp::Ordering::Greater {
+        if balance > 1
+            && compare_cells(&cell, &left.as_ref().unwrap().borrow().cell, sheet_data)
+                == std::cmp::Ordering::Greater
+        {
             let left_rotated = rotate_left(left.unwrap());
             n.borrow_mut().left = Some(left_rotated);
             return Some(rotate_right(n));
         }
         // RL Case
-        if balance < -1 && compare_cells(&cell, &right.as_ref().unwrap().borrow().cell, sheet_data) == std::cmp::Ordering::Less {
+        if balance < -1
+            && compare_cells(&cell, &right.as_ref().unwrap().borrow().cell, sheet_data)
+                == std::cmp::Ordering::Less
+        {
             let right_rotated = rotate_right(right.unwrap());
             n.borrow_mut().right = Some(right_rotated);
             return Some(rotate_left(n));
@@ -247,7 +252,8 @@ pub fn delete_node(root: Link, row: usize, col: usize, sheet_data: &SheetData) -
                 node_borrow.cell = temp.borrow().cell.clone();
                 // let (t_row, t_col) = calculate_row_col(&temp.borrow().cell, sheet).unwrap();
                 let (t_row, t_col) = sheet_data.calculate_row_col(&temp.borrow().cell).unwrap();
-                node_borrow.right = delete_node(node_borrow.right.clone(), t_row, t_col, sheet_data);
+                node_borrow.right =
+                    delete_node(node_borrow.right.clone(), t_row, t_col, sheet_data);
             }
         }
 
@@ -283,162 +289,3 @@ pub fn delete_node(root: Link, row: usize, col: usize, sheet_data: &SheetData) -
         None
     }
 }
-
-// pub fn inorder_traversal(root: &Link, sheet_data: &SheetData) {
-//     fn traverse(node: &Link, sheet_data: &SheetData) {
-//         if let Some(n) = node {
-//             let n_borrow = n.borrow();
-//             traverse(&n_borrow.left, sheet_data);
-
-//             let (r, c) = sheet_data.calculate_row_col(&n_borrow.cell).unwrap();
-//             let cell = n_borrow.cell.borrow();
-//             println!("({r}, {c}) = {}", cell.val);
-
-//             traverse(&n_borrow.right, sheet_data);
-//         }
-//     }
-//     traverse(root, sheet_data);
-// }
-
-// pub fn find(node: &Link, value: i32) -> Link {
-//     match node {
-//         Some(n) => {
-//             let n_borrow = n.borrow();
-//             if value == n_borrow.cell.borrow().val {
-//                 Some(n.clone())
-//             } else if value < n_borrow.cell.borrow().val {
-//                 find(&n_borrow.left, value)
-//             } else {
-//                 find(&n_borrow.right, value)
-//             }
-//         }
-//         None => None,
-//     }
-// }
-
-// pub fn insert(node: Link, cell: Rc<RefCell<Cell>>) -> Link {
-//     if let Some(n) = node {
-//         let mut n_borrow = n.borrow_mut();
-
-//         if cell.borrow().val < n_borrow.cell.borrow().val {
-//             n_borrow.left = insert(n_borrow.left.clone(), cell.clone());
-//         } else if cell.borrow().val > n_borrow.cell.borrow().val {
-//             n_borrow.right = insert(n_borrow.right.clone(), cell.clone());
-//         } else {
-//             return Some(n.clone()); // Duplicate values not allowed
-//         }
-
-//         n_borrow.height = 1 + max(height(&n_borrow.left), height(&n_borrow.right));
-//         drop(n_borrow);
-
-//         let balance = get_balance(&n);
-//         let node = n.clone();
-
-//         if balance > 1 && cell.borrow().val < node.borrow().left.as_ref().unwrap().borrow().cell.borrow().val {
-//             return Some(rotate_right(node));
-//         }
-//         if balance < -1 && cell.borrow().val > node.borrow().right.as_ref().unwrap().borrow().cell.borrow().val {
-//             return Some(rotate_left(node));
-//         }
-//         if balance > 1 && cell.borrow().val > node.borrow().left.as_ref().unwrap().borrow().cell.borrow().val {
-//             let left_rotated = rotate_left(node.borrow().left.clone().unwrap());
-//             node.borrow_mut().left = Some(left_rotated);
-//             return Some(rotate_right(node));
-//         }
-//         if balance < -1 && cell.borrow().val < node.borrow().right.as_ref().unwrap().borrow().cell.borrow().val {
-//             let right_rotated = rotate_right(node.borrow().right.clone().unwrap());
-//             node.borrow_mut().right = Some(right_rotated);
-//             return Some(rotate_left(node));
-//         }
-
-//         Some(node)
-//     } else {
-//         Some(AvlNode::new(cell))
-//     }
-// }
-
-// pub fn delete_node(root: Link, value: i32) -> Link {
-//     if let Some(node) = root {
-//         let mut node_borrow = node.borrow_mut();
-
-//         if value < node_borrow.cell.borrow().val {
-//             node_borrow.left = delete_node(node_borrow.left.clone(), value);
-//         } else if value > node_borrow.cell.borrow().val {
-//             node_borrow.right = delete_node(node_borrow.right.clone(), value);
-//         } else {
-//             // Node to be deleted found
-//             if node_borrow.left.is_none() || node_borrow.right.is_none() {
-//                 return node_borrow.left.clone().or(node_borrow.right.clone());
-//             } else {
-//                 let temp = min_value_node(node_borrow.right.clone().unwrap());
-//                 let replacement_value = temp.borrow().cell.borrow().val;
-//                 node_borrow.cell = Rc::new(RefCell::new(Cell { value: replacement_value }));
-//                 node_borrow.right = delete_node(node_borrow.right.clone(), replacement_value);
-//             }
-//         }
-
-//         node_borrow.height = 1 + max(height(&node_borrow.left), height(&node_borrow.right));
-//         drop(node_borrow);
-
-//         let balance = get_balance(&node);
-
-//         if balance > 1 && get_balance(&node.borrow().left.as_ref().unwrap()) >= 0 {
-//             return Some(rotate_right(node));
-//         }
-
-//         if balance > 1 && get_balance(&node.borrow().left.as_ref().unwrap()) < 0 {
-//             let left_rotated = rotate_left(node.borrow().left.clone().unwrap());
-//             node.borrow_mut().left = Some(left_rotated);
-//             return Some(rotate_right(node));
-//         }
-
-//         if balance < -1 && get_balance(&node.borrow().right.as_ref().unwrap()) <= 0 {
-//             return Some(rotate_left(node));
-//         }
-
-//         if balance < -1 && get_balance(&node.borrow().right.as_ref().unwrap()) > 0 {
-//             let right_rotated = rotate_right(node.borrow().right.clone().unwrap());
-//             node.borrow_mut().right = Some(right_rotated);
-//             return Some(rotate_left(node));
-//         }
-
-//         Some(node)
-//     } else {
-//         None
-//     }
-// }
-
-// pub struct AvlTree {
-//     root: Link,
-// }
-
-// impl AvlTree {
-//     pub fn new() -> Self {
-//         AvlTree { root: None }
-//     }
-
-//     pub fn insert(&mut self, value: i32) {
-//         let cell = Rc::new(RefCell::new(Cell { value }));
-//         self.root = insert(self.root.take(), cell);
-//     }
-
-//     pub fn delete(&mut self, value: i32) {
-//         self.root = delete_node(self.root.take(), value);
-//     }
-
-//     pub fn find(&self, value: i32) -> bool {
-//         find(&self.root, value).is_some()
-//     }
-
-//     pub fn inorder(&self) {
-//         fn traverse(node: &Link) {
-//             if let Some(n) = node {
-//                 traverse(&n.borrow().left);
-//                 print!("{} ", n.borrow().cell.borrow().val);
-//                 traverse(&n.borrow().right);
-//             }
-//         }
-//         traverse(&self.root);
-//         println!();
-//     }
-// }
