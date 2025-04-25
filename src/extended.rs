@@ -1,4 +1,5 @@
 use std::env;
+use printpdf::{PdfDocument, PdfPage, PdfLayerIndex, BuiltinFont, Mm};
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode},
@@ -55,6 +56,18 @@ impl Cell {
             Alignment::Left => format!("{:<width$}", content, width = self.width),
             Alignment::Right => format!("{:>width$}", content, width = self.width),
             Alignment::Center => format!("{:^width$}", content, width = self.width),
+        }
+    }
+
+    fn default() -> Self {
+        Cell {
+            raw_value: String::new(),
+            display_value: String::new(),
+            formula: None,
+            alignment: Alignment::Center,
+            is_locked: false,
+            width: 5, // or whatever default width you use
+            height: 1,
         }
     }
 }
@@ -188,6 +201,8 @@ impl Spreadsheet {
     }
 
     fn get_cell(&self, addr: &CellAddress) -> Option<&Cell> {
+        // println!("DEBUG: {}", addr.to_string());
+        // println!("DEBUG: Current cell data: {:?}", self.data);
         self.data.get(&addr.to_string())
     }
 
@@ -319,68 +334,68 @@ impl Spreadsheet {
         // }
     }
 
-    // fn extract_dependencies(&self, formula: &str) -> Vec<String> {
-    //     let mut dependencies = Vec::new();
+    fn extract_dependencies(&self, formula: &str) -> Vec<String> {
+        let mut dependencies = Vec::new();
         
-    //     // Extract cell references from formulas like "=A1+B2"
-    //     if formula.starts_with('=') {
-    //         let formula = &formula[1..]; // Skip the '=' character
+        // Extract cell references from formulas like "=A1+B2"
+        if formula.starts_with('=') {
+            let formula = &formula[1..]; // Skip the '=' character
             
-    //         // Handle range formulas like SUM(A1:B2)
-    //         if formula.contains('(') && formula.contains(')') && formula.contains(':') {
-    //             let range_start = formula.find('(').unwrap() + 1;
-    //             let range_end = formula.find(')').unwrap();
-    //             if range_start < range_end {
-    //                 let range_str = &formula[range_start..range_end];
-    //                 if let Some((start, end)) = self.parse_range(range_str) {
-    //                     // Add all cells in the range as dependencies
-    //                     for col in start.col..=end.col {
-    //                         for row in start.row..=end.row {
-    //                             let addr = CellAddress::new(col, row).to_string();
-    //                             dependencies.push(addr);
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         } else if formula.contains('(') && formula.contains(')') {
-    //             let func_start = formula.find('(').unwrap() + 1;
-    //             let func_end = formula.find(')').unwrap();
-    //             if func_start < func_end {
-    //                 let cell_ref = &formula[func_start..func_end];
-    //                 if let Some(addr) = CellAddress::from_str(cell_ref) {
-    //                     dependencies.push(addr.to_string());
-    //                 }
-    //             }
-    //         }
-    //         // Handle simple cell references
-    //         else {
-    //             // Simple regex-like pattern for cell references (e.g., A1, B2)
-    //             for c in formula.chars() {
-    //                 if c.is_ascii_alphabetic() {
-    //                     let col_char = c;
-    //                     let mut remaining = formula.chars().skip_while(|&ch| ch != col_char).skip(1);
-    //                     let mut row_str = String::new();
+            // Handle range formulas like SUM(A1:B2)
+            if formula.contains('(') && formula.contains(')') && formula.contains(':') {
+                let range_start = formula.find('(').unwrap() + 1;
+                let range_end = formula.find(')').unwrap();
+                if range_start < range_end {
+                    let range_str = &formula[range_start..range_end];
+                    if let Some((start, end)) = self.parse_range(range_str) {
+                        // Add all cells in the range as dependencies
+                        for col in start.col..=end.col {
+                            for row in start.row..=end.row {
+                                let addr = CellAddress::new(col, row).to_string();
+                                dependencies.push(addr);
+                            }
+                        }
+                    }
+                }
+            } else if formula.contains('(') && formula.contains(')') {
+                let func_start = formula.find('(').unwrap() + 1;
+                let func_end = formula.find(')').unwrap();
+                if func_start < func_end {
+                    let cell_ref = &formula[func_start..func_end];
+                    if let Some(addr) = CellAddress::from_str(cell_ref) {
+                        dependencies.push(addr.to_string());
+                    }
+                }
+            }
+            // Handle simple cell references
+            else {
+                // Simple regex-like pattern for cell references (e.g., A1, B2)
+                for c in formula.chars() {
+                    if c.is_ascii_alphabetic() {
+                        let col_char = c;
+                        let mut remaining = formula.chars().skip_while(|&ch| ch != col_char).skip(1);
+                        let mut row_str = String::new();
                         
-    //                     while let Some(c) = remaining.next() {
-    //                         if c.is_ascii_digit() {
-    //                             row_str.push(c);
-    //                         } else {
-    //                             break;
-    //                         }
-    //                     }
+                        while let Some(c) = remaining.next() {
+                            if c.is_ascii_digit() {
+                                row_str.push(c);
+                            } else {
+                                break;
+                            }
+                        }
                         
-    //                     if !row_str.is_empty() {
-    //                         if let Some(addr) = CellAddress::from_str(&format!("{}{}", col_char, row_str)) {
-    //                             dependencies.push(addr.to_string());
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
+                        if !row_str.is_empty() {
+                            if let Some(addr) = CellAddress::from_str(&format!("{}{}", col_char, row_str)) {
+                                dependencies.push(addr.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
         
-    //     dependencies
-    // }
+        dependencies
+    }
 
     // fn propagate_changes(&mut self, cell_addr: &str) {
     //     // Find all cells that depend on this cell
@@ -449,7 +464,7 @@ impl Spreadsheet {
                 
                 if let Some(addr) = CellAddress::from_str(&dependent) {
                     // Update the cell with its formula to recalculate
-                    self.update_cell(&addr, &formula_with_eq);
+                    self.update_cell(&addr, &formula_with_eq, true);
                     
                     // We don't need to recursively call propagate_changes here
                     // because update_cell will handle that for us
@@ -458,7 +473,7 @@ impl Spreadsheet {
         }
     }
 
-    fn update_cell(&mut self, addr: &CellAddress, value: &str) -> bool {
+    fn update_cell(&mut self, addr: &CellAddress, value: &str, multi:bool) -> bool {
         // First, check if cell exists and if it's locked
         let cell_exists = self.get_cell(addr).is_some();
         let is_locked = self.get_cell(addr).map_or(false, |cell| cell.is_locked);
@@ -542,8 +557,13 @@ impl Spreadsheet {
                 };
             }
             else {
-                self.push_undo(addr.clone(), old_cell);
-                self.redo_stack.clear();
+                if(!multi){
+                    println!("DEBUG: Pushing undo for cell {}", addr.to_string());
+                    self.push_undo_sheet();
+                    self.redo_stack.clear(); 
+                }
+                // self.push_undo_sheet();
+                // self.redo_stack.clear(); 
 
                 self.update_dependencies(&addr.to_string(), value);
 
@@ -561,8 +581,11 @@ impl Spreadsheet {
             }
             if is_valid_formula {
                 // Save the old cell for undo (clone it before modifying)
-                self.push_undo(addr.clone(), old_cell);
-                self.redo_stack.clear();
+                if(!multi){
+                    println!("DEBUG: Pushing undo for cell {}", addr.to_string());
+                    self.push_undo_sheet();
+                    self.redo_stack.clear(); 
+                }
 
                 let formula = &value[1..];
                 // self.remove_dependencies(&addr.to_string());
@@ -782,39 +805,39 @@ impl Spreadsheet {
         
     //     false
     // }
-    fn push_undo_sheet(&mut self) {
-        // Create a copy of the entire sheet as individual cell actions
-        let mut sheet_action = SheetAction {
-            cells: Vec::new(),
-        };
+    // fn push_undo_sheet(&mut self) {
+    //     // Create a copy of the entire sheet as individual cell actions
+    //     let mut sheet_action = SheetAction {
+    //         cells: Vec::new(),
+    //     };
         
-        // Add all cells to the action
-        for (addr_str, cell) in &self.data {
-            if let Some(addr) = CellAddress::from_str(addr_str) {
-                sheet_action.cells.push(UndoAction {
-                    cell_address: addr,
-                    old_cell: cell.clone(),
-                });
-            }
-        }
+    //     // Add all cells to the action
+    //     for (addr_str, cell) in &self.data {
+    //         if let Some(addr) = CellAddress::from_str(addr_str) {
+    //             sheet_action.cells.push(UndoAction {
+    //                 cell_address: addr,
+    //                 old_cell: cell.clone(),
+    //             });
+    //         }
+    //     }
         
-        // Maintain max 3 undo steps
-        if self.undo_stack.len() >= 3 {
-            // Remove oldest actions
-            let actions_to_remove = sheet_action.cells.len();
-            for _ in 0..actions_to_remove {
-                if !self.undo_stack.is_empty() {
-                    self.undo_stack.pop_front();
-                }
-            }
-        }
+    //     // Maintain max 3 undo steps
+    //     if self.undo_stack.len() >= 3 {
+    //         // Remove oldest actions
+    //         let actions_to_remove = sheet_action.cells.len();
+    //         for _ in 0..actions_to_remove {
+    //             if !self.undo_stack.is_empty() {
+    //                 self.undo_stack.pop_front();
+    //             }
+    //         }
+    //     }
         
-        // Add all cells to the undo stack
-        for cell_action in sheet_action.cells {
-            self.undo_stack.push_back(cell_action);
-        }
-    }
-    
+    //     // Add all cells to the undo stack
+    //     for cell_action in sheet_action.cells {
+    //         self.undo_stack.push_back(cell_action);
+    //     }
+    // }
+
     fn push_undo(&mut self, addr: CellAddress, old_cell: Cell) {
         // Maintain max 3 undo steps
         if self.undo_stack.len() >= 3 {
@@ -826,45 +849,168 @@ impl Spreadsheet {
         });
     }
 
-    fn undo(&mut self) -> bool {
-        if let Some(action) = self.undo_stack.pop_back() {
-            // Save current state for redo
-            if let Some(cell) = self.get_cell(&action.cell_address) {
-                // Push to redo stack
-                self.redo_stack.push_back(UndoAction {
-                    cell_address: action.cell_address.clone(),
-                    old_cell: cell.clone()
-                });
+    // fn undo(&mut self) -> bool {
+    //     if let Some(action) = self.undo_stack.pop_back() {
+    //         // Save current state for redo
+    //         if let Some(cell) = self.get_cell(&action.cell_address) {
+    //             // Push to redo stack
+    //             self.redo_stack.push_back(UndoAction {
+    //                 cell_address: action.cell_address.clone(),
+    //                 old_cell: cell.clone()
+    //             });
                 
-                // Apply the undo
-                if let Some(target_cell) = self.get_cell_mut(&action.cell_address) {
-                    *target_cell = action.old_cell;
-                    self.status_message = "UNDO APPLIED".to_string();
-                    return true;
+    //             // Apply the undo
+    //             if let Some(target_cell) = self.get_cell_mut(&action.cell_address) {
+    //                 *target_cell = action.old_cell;
+    //                 self.status_message = "UNDO APPLIED".to_string();
+    //                 return true;
+    //             }
+    //         }
+    //     }
+    //     self.status_message = "NOTHING TO UNDO".to_string();
+    //     false
+    // }
+
+    // fn redo(&mut self) -> bool {
+    //     if let Some(action) = self.redo_stack.pop_back() {
+    //         // Save current state for undo
+    //         if let Some(cell) = self.get_cell(&action.cell_address) {
+    //             // Push to undo stack
+    //             self.push_undo(action.cell_address.clone(), cell.clone());
+                
+    //             // Apply the redo
+    //             if let Some(target_cell) = self.get_cell_mut(&action.cell_address) {
+    //                 *target_cell = action.old_cell;
+    //                 self.status_message = "REDO APPLIED".to_string();
+    //                 return true;
+    //             }
+    //         }
+    //     }
+    //     self.status_message = "NOTHING TO REDO".to_string();
+    //     false
+    // }
+    fn push_undo_sheet(&mut self) {
+        // Add all cells to the undo stack
+        for (addr_str, cell) in &self.data {
+            if let Some(addr) = CellAddress::from_str(addr_str) {
+                // Maintain max 3 undo steps - only check on the first cell
+                if addr_str == "A1" && self.undo_stack.len() >= 3 {
+                    self.undo_stack.clear();
                 }
+                
+                self.undo_stack.push_back(UndoAction {
+                    cell_address: addr,
+                    old_cell: cell.clone(),
+                });
             }
         }
-        self.status_message = "NOTHING TO UNDO".to_string();
-        false
+    }
+
+    fn undo(&mut self) -> bool {
+        // Check if we have any actions to undo
+        if self.undo_stack.is_empty() {
+            self.status_message = "NOTHING TO UNDO".to_string();
+            return false;
+        }
+        
+        // Store all current cell states for redo before undoing
+        for (addr_str, cell) in &self.data {
+            if let Some(addr) = CellAddress::from_str(addr_str) {
+                self.redo_stack.push_back(UndoAction {
+                    cell_address: addr,
+                    old_cell: cell.clone(),
+                });
+            }
+        }
+        
+        // Now restore all cells from the undo stack
+        let mut restored_cells = HashMap::new();
+        
+        while let Some(action) = self.undo_stack.pop_back() {
+            // Store the restored cell
+            restored_cells.insert(action.cell_address.to_string(), action.old_cell);
+            
+            // Stop when we've restored all cells
+            if restored_cells.len() == self.data.len() {
+                break;
+            }
+        }
+        
+        // Apply all restored cells to the sheet
+        for (addr_str, cell) in restored_cells {
+            if let Some(target_cell) = self.data.get_mut(&addr_str) {
+                *target_cell = cell;
+            }
+        }
+        
+        self.status_message = "UNDO APPLIED".to_string();
+        true
     }
 
     fn redo(&mut self) -> bool {
-        if let Some(action) = self.redo_stack.pop_back() {
-            // Save current state for undo
-            if let Some(cell) = self.get_cell(&action.cell_address) {
-                // Push to undo stack
-                self.push_undo(action.cell_address.clone(), cell.clone());
-                
-                // Apply the redo
-                if let Some(target_cell) = self.get_cell_mut(&action.cell_address) {
-                    *target_cell = action.old_cell;
-                    self.status_message = "REDO APPLIED".to_string();
-                    return true;
+        // Check if we have any actions to redo
+        if self.redo_stack.is_empty() {
+            self.status_message = "NOTHING TO REDO".to_string();
+            return false;
+        }
+        
+        // Store all current cell states for undo before redoing
+        for (addr_str, cell) in &self.data {
+            if let Some(addr) = CellAddress::from_str(addr_str) {
+                self.undo_stack.push_back(UndoAction {
+                    cell_address: addr,
+                    old_cell: cell.clone(),
+                });
+            }
+        }
+        
+        // Now restore all cells from the redo stack
+        let mut restored_cells = HashMap::new();
+        
+        while let Some(action) = self.redo_stack.pop_back() {
+            // Store the restored cell
+            restored_cells.insert(action.cell_address.to_string(), action.old_cell);
+            
+            // Stop when we've restored all cells
+            if restored_cells.len() == self.data.len() {
+                break;
+            }
+        }
+        
+        // Apply all restored cells to the sheet
+        for (addr_str, cell) in restored_cells {
+            if let Some(target_cell) = self.data.get_mut(&addr_str) {
+                *target_cell = cell;
+            }
+        }
+        
+        self.status_message = "REDO APPLIED".to_string();
+        true
+    }
+
+    fn recalculate_dependencies(&mut self) {
+        // Clear existing dependencies
+        self.dependencies.clear();
+        self.dependents.clear();
+        
+        // Rebuild dependencies from formulas
+        for (addr_str, cell) in &self.data {
+            if let Some(formula) = &cell.formula {
+                // Extract dependencies from formula and update the dependency maps
+                let deps = self.extract_dependencies(formula);
+                for dep in deps {
+                    // Add this cell as dependent of the dependency
+                    self.dependents.entry(dep.clone())
+                        .or_insert_with(HashSet::new)
+                        .insert(addr_str.clone());
+                    
+                    // Add the dependency to this cell's dependencies
+                    self.dependencies.entry(addr_str.clone())
+                        .or_insert_with(HashSet::new)
+                        .insert(dep);
                 }
             }
         }
-        self.status_message = "NOTHING TO REDO".to_string();
-        false
     }
 
     fn lock_cell(&mut self, addr: Option<&str>) -> bool {
@@ -1047,11 +1193,12 @@ impl Spreadsheet {
             let end_col = start.col.max(end.col);
             let start_row = start.row.min(end.row);
             let end_row = start.row.max(end.row);
-            
+            self.push_undo_sheet();
+            self.redo_stack.clear(); 
             for col in start_col..=end_col {
                 for row in start_row..=end_row {
                     let addr = CellAddress::new(col, row);
-                    if !self.update_cell(&addr, value) {
+                    if !self.update_cell(&addr, value,true) {
                         // If any cell fails (e.g., is locked), continue with the rest
                         continue;
                     }
@@ -1073,59 +1220,173 @@ impl Spreadsheet {
         Ok(())
     }
 
+    // fn load_json(&mut self, path: &Path) -> io::Result<()> {
+    //     let file = File::open(path)?;
+    //     let reader = BufReader::new(file);
+    //     self.data = serde_json::from_reader(reader)?;
+    //     Ok(())
+    // }
+
     fn load_json(&mut self, path: &Path) -> io::Result<()> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         self.data = serde_json::from_reader(reader)?;
+        
+        // Reset max rows and columns
+        self.max_rows = 0;
+        self.max_cols = 0;
+        
+        // Scan through all cell addresses to find the maximum row and column
+        for addr_str in self.data.keys() {
+            if let Some(addr) = CellAddress::from_str(addr_str) {
+                // Update max_rows if this cell's row is larger
+                if addr.row > self.max_rows {
+                    self.max_rows = addr.row;
+                }
+                
+                // Update max_cols if this cell's column is larger
+                if addr.col > self.max_cols {
+                    self.max_cols = addr.col;
+                }
+            }
+        }
+        
+        // If no cells were found, set defaults
+        if self.max_rows == 0 {
+            self.max_rows = 10; // Default number of rows
+        }
+        
+        if self.max_cols == 0 {
+            self.max_cols = 10; // Default number of columns
+        }
+        self.max_rows += 1; // Adjust for 0-based indexing
+        self.max_cols += 1; // Adjust for 0-based indexing
+        // println!("DEBUG: Max rows: {}, Max cols: {}", self.max_rows, self.max_cols);
+        unsafe {
+            C = self.max_cols;
+            R = self.max_rows;
+        }
+        
         Ok(())
     }
 
+    // fn sort_range(&mut self, range_str: &str, ascending: bool) -> bool {
+    //     // Remove brackets if present
+    //     let range_str = range_str.trim_start_matches('[').trim_end_matches(']');
+    
+    //     if let Some((start, end)) = self.parse_range(range_str) {
+    //         let col = start.col;
+    //         let start_row = start.row;
+    //         let end_row = end.row;
+    
+    //         // Collect full rows with the value in the sort column
+    //         let mut rows: Vec<(usize, Vec<Cell>)> = Vec::new();
+    
+    //         for row in start_row..=end_row {
+    //             let mut row_cells = Vec::new();
+    //             for c in 0..unsafe{ C} {
+    //                 let addr = CellAddress::new(c, row);
+    //                 if let Some(cell) = self.get_cell(&addr).cloned() {
+    //                     row_cells.push(cell);
+    //                 } else {
+    //                     row_cells.push(Cell::default()); // fallback empty cell
+    //                 }
+    //             }
+    //             rows.push((row, row_cells));
+    //         }
+    
+    //         // Sort rows based on value in the specified column
+    //         rows.sort_by(|a, b| {
+    //             let val_a = &a.1[col].display_value;
+    //             let val_b = &b.1[col].display_value;
+    //             let result = val_a.cmp(val_b);
+    //             if ascending { result } else { result.reverse() }
+    //         });
+    
+    //         // Apply sorted rows back
+    //         for (i, (_, row_cells)) in rows.into_iter().enumerate() {
+    //             let new_row = start_row + i;
+    //             for (c, cell) in row_cells.into_iter().enumerate() {
+    //                 let addr = CellAddress::new(c, new_row);
+    //                 if let Some(target) = self.get_cell_mut(&addr) {
+    //                     if !target.is_locked {
+    //                         *target = cell;
+    //                     }
+    //                 }
+    //             }
+    //         }
+    
+    //         self.status_message = "ROW SORT APPLIED".to_string();
+    //         true
+    //     } else {
+    //         self.status_message = "INVALID RANGE".to_string();
+    //         false
+    //     }
+    // }
     fn sort_range(&mut self, range_str: &str, ascending: bool) -> bool {
         // Remove brackets if present
         let range_str = range_str.trim_start_matches('[').trim_end_matches(']');
-        
+    
         if let Some((start, end)) = self.parse_range(range_str) {
-            // Currently only supporting sorting a single column
-            if start.col == end.col {
-                let col = start.col;
-                let start_row = start.row.min(end.row);
-                let end_row = start.row.max(end.row);
-                
-                // Collect values to sort
-                let mut values: Vec<(usize, String)> = Vec::new();
-                for row in start_row..=end_row {
-                    let addr = CellAddress::new(col, row);
-                    if let Some(cell) = self.get_cell(&addr) {
-                        values.push((row, cell.display_value.clone()));
+            let col = start.col;
+            let start_row = start.row;
+            let end_row = end.row;
+    
+            // Save the current state for undo before sorting
+            self.push_undo_sheet();
+            self.redo_stack.clear();
+    
+            // Collect full rows with the value in the sort column
+            let mut rows: Vec<(usize, Vec<Cell>)> = Vec::new();
+    
+            for row in start_row..=end_row {
+                let mut row_cells = Vec::new();
+                for c in 0..self.max_cols {
+                    let addr = CellAddress::new(c, row);
+                    if let Some(cell) = self.get_cell(&addr).cloned() {
+                        row_cells.push(cell);
+                    } else {
+                        row_cells.push(Cell::default()); // fallback empty cell
                     }
                 }
-                
-                // Sort values
-                values.sort_by(|a, b| {
-                    let result = a.1.cmp(&b.1);
-                    if ascending { result } else { result.reverse() }
-                });
-                
-                // Apply sorted values (this is a simplified approach)
-                for (i, (row, _value)) in values.iter().enumerate() {
-                    let source_addr = CellAddress::new(col, *row);
-                    let target_addr = CellAddress::new(col, start_row + i);
-                    
-                    if let Some(source_cell) = self.get_cell(&source_addr).cloned() {
-                        if let Some(target_cell) = self.get_cell_mut(&target_addr) {
-                            if !target_cell.is_locked {
-                                *target_cell = source_cell;
-                            }
-                        }
-                    }
-                }
-                
-                self.status_message = "SORT APPLIED".to_string();
-                true
-            } else {
-                self.status_message = "ONLY COLUMN SORTING IMPLEMENTED".to_string();
-                false
+                rows.push((row, row_cells));
             }
+    
+            // Sort rows based on value in the specified column
+            rows.sort_by(|a, b| {
+                let val_a = &a.1.get(col).map_or("", |cell| &cell.display_value);
+                let val_b = &b.1.get(col).map_or("", |cell| &cell.display_value);
+                
+                // Try to compare as numbers first
+                if let (Ok(num_a), Ok(num_b)) = (val_a.parse::<f64>(), val_b.parse::<f64>()) {
+                    let result = num_a.partial_cmp(&num_b).unwrap_or(std::cmp::Ordering::Equal);
+                    return if ascending { result } else { result.reverse() };
+                }
+                
+                // If not numbers, compare as strings
+                let result = val_a.cmp(val_b);
+                if ascending { result } else { result.reverse() }
+            });
+    
+            // Apply sorted rows back
+            for (i, (_, row_cells)) in rows.into_iter().enumerate() {
+                let new_row = start_row + i;
+                for (c, cell) in row_cells.into_iter().enumerate() {
+                    let addr = CellAddress::new(c, new_row);
+                    if let Some(target) = self.get_cell_mut(&addr) {
+                        if !target.is_locked {
+                            *target = cell;
+                        }
+                    } else {
+                        // Insert new cell if it doesn't exist
+                        let addr_str = addr.to_string();
+                        self.data.insert(addr_str, cell);
+                    }
+                }
+            }
+    
+            self.status_message = "ROW SORT APPLIED".to_string();
+            true
         } else {
             self.status_message = "INVALID RANGE".to_string();
             false
@@ -1162,6 +1423,114 @@ impl Spreadsheet {
                 )
             }
         }
+    }
+
+    fn export_to_pdf(&self, filename: &str) -> Result<()> {
+        // Create a new PDF document
+        let (mut doc, page1, layer1) = PdfDocument::new("Spreadsheet Export", Mm(210.0), Mm(297.0), "Layer 1");
+        let mut current_page = page1;
+        let mut current_layer = doc.get_page(current_page).get_layer(layer1);
+        
+        // Add the built-in Helvetica font
+        let font = doc.add_builtin_font(BuiltinFont::Helvetica).map_err(|e| {
+            io::Error::new(io::ErrorKind::Other, format!("Error adding font: {}", e))
+        })?;
+        
+        // Set page dimensions and layout parameters
+        let page_width = Mm(210.0);  // A4 width
+        let page_height = Mm(297.0); // A4 height
+        let margin_top = Mm(20.0);
+        let margin_bottom = Mm(20.0);
+        let margin_left = Mm(10.0);
+        let cell_width = Mm(19.0);   // Adjusted to fit 10 columns (A-J) plus row numbers
+        let row_height = Mm(10.0);
+        
+        // Maximum rows per page calculation
+        let content_height = page_height - margin_top - margin_bottom;
+        let max_rows_per_page = (content_height.0 / row_height.0).floor() as i32 - 1; // -1 for header row
+        
+        // Calculate dimensions
+        let row_count = unsafe { R };
+        let col_count = unsafe { C };
+        let max_cols = 10; // Limit to 10 columns (A-J)
+        
+        // Store page indices for adding page numbers later
+        let mut page_indices = vec![page1];
+        
+        // Process the data in page chunks
+        let mut processed_rows = 0;
+        
+        while processed_rows < row_count {
+            // Calculate rows for current page
+            let rows_in_this_page = std::cmp::min(max_rows_per_page,(row_count - processed_rows) as i32);
+            let mut y_position = page_height - margin_top;
+            
+            // Draw column headers (A, B, C, etc.)
+            let mut x_position = margin_left + cell_width; // Starting after row numbers column
+            current_layer.use_text("", 10.0, margin_left, y_position, &font); // Empty top-left cell
+            
+            // Draw column headers A through J (limited to max_cols)
+            for col in 0..std::cmp::min(col_count, max_cols) {
+                let col_label = format!("{}", char::from(b'A' + col as u8));
+                current_layer.use_text(&col_label, 10.0, x_position, y_position, &font);
+                x_position += cell_width;
+            }
+            
+            y_position -= row_height;
+            
+            // Draw rows with row numbers for this page
+            for page_row in 0..rows_in_this_page {
+                let actual_row = processed_rows + page_row as usize;
+                
+                // Draw row number
+                let row_label = format!("{}", actual_row + 1); // +1 because row numbers start at 1
+                current_layer.use_text(&row_label, 10.0, margin_left, y_position, &font);
+                
+                // Draw cells for this row
+                x_position = margin_left + cell_width;
+                for col in 0..std::cmp::min(col_count, max_cols) {
+                    let addr = CellAddress::new(col, actual_row);
+                    let text = if let Some(cell) = self.get_cell(&addr) {
+                        cell.display_value.clone()
+                    } else {
+                        "".to_string()
+                    };
+                    
+                    current_layer.use_text(&text, 10.0, x_position, y_position, &font);
+                    x_position += cell_width;
+                }
+                
+                y_position -= row_height;
+            }
+            
+            processed_rows += rows_in_this_page as usize ;
+            
+            // Create a new page if there are more rows to process
+            if processed_rows < row_count {
+                let (new_page, new_layer) = doc.add_page(page_width, page_height, format!("Page {}", processed_rows / (max_rows_per_page as usize) + 2));
+                current_page = new_page;
+                current_layer = doc.get_page(current_page).get_layer(new_layer);
+                page_indices.push(current_page); // Store the new page index
+            }
+        }
+        
+        // Add page numbers
+        let page_count = page_indices.len();
+        for (i, page_index) in page_indices.iter().enumerate() {
+            let page_num = i + 1;
+            let layer_ref = doc.get_page(*page_index).get_layer(layer1); // Reuse layer1 or create new layers
+            
+            // Add page number at bottom center
+            let page_text = format!("Page {} of {}", page_num, page_count);
+            layer_ref.use_text(&page_text, 10.0, page_width / 2.0 - Mm(15.0), margin_bottom / 2.0, &font);
+        }
+        
+        // Save the document
+        doc.save(&mut BufWriter::new(File::create(filename)?)).map_err(|e| {
+            io::Error::new(io::ErrorKind::Other, format!("Error saving PDF: {}", e))
+        })?;
+        
+        Ok(())
     }
 
     fn process_command(&mut self) -> bool {
@@ -1305,17 +1674,33 @@ impl Spreadsheet {
             } else {
                 self.status_message = "INVALID SORT COMMAND".to_string();
             }
-        } else if cmd.starts_with("save") {
-            // Save
+        } else if cmd.starts_with("saveas_") {
             let parts: Vec<&str> = cmd.splitn(2, ' ').collect();
             if parts.len() == 2 {
-                if let Err(e) = self.save_json(Path::new(parts[1])) {
-                    self.status_message = format!("SAVE ERROR: {}", e);
-                } else {
-                    self.status_message = format!("FILE SAVED TO {}", parts[1]);
+                let filetype = &cmd[7..cmd.find(' ').unwrap_or(cmd.len())];
+                let filepath = parts[1].trim();
+        
+                match filetype {
+                    "json" => {
+                        if let Err(e) = self.save_json(Path::new(filepath)) {
+                            self.status_message = format!("SAVE ERROR: {}", e);
+                        } else {
+                            self.status_message = format!("FILE SAVED TO {}", filepath);
+                        }
+                    }
+                    "pdf" => {
+                        if let Err(e) = self.export_to_pdf(filepath) {
+                            self.status_message = format!("PDF EXPORT ERROR: {}", e);
+                        } else {
+                            self.status_message = format!("PDF SAVED TO {}", filepath);
+                        }
+                    }
+                    _ => {
+                        self.status_message = "UNSUPPORTED FORMAT. Use saveas_json or saveas_pdf.".to_string();
+                    }
                 }
             } else {
-                self.status_message = "INVALID SAVE COMMAND".to_string();
+                self.status_message = "USAGE: saveas_<format> <filename>".to_string();
             }
         } else if cmd.starts_with("load") {
             // Load
@@ -1406,7 +1791,7 @@ impl Spreadsheet {
                         // println!("Debug: Inserting value {} at {}", command_buffer_clone, cursor_clone.to_string());
                         // Now we can safely call update_cell with the cloned values
                         self.status_message.clear();
-                        self.update_cell(&cursor_clone, &command_buffer_clone);
+                        self.update_cell(&cursor_clone, &command_buffer_clone, false);
                         self.mode = Mode::Normal;
                         self.command_buffer.clear();
                         
@@ -1485,7 +1870,7 @@ impl Spreadsheet {
             col_widths[col_idx] = col_widths[col_idx].max(col_letter.len());
             
             // Check all cells in this column
-            for row in unsafe { START_ROW..(START_ROW + 10) } {
+            for row in unsafe { START_ROW..(START_ROW + 10).min(unsafe { R }) } {
                 let addr = CellAddress::new(col, row);
                 if let Some(cell) = self.get_cell(&addr) {
                     // Get cell width from attribute
@@ -1503,7 +1888,7 @@ impl Spreadsheet {
         write!(stdout, "{:<width$}", "", width = row_label_width+1)?;
         
         // Column headers (A, B, C, etc.)
-        for col in unsafe { START_COL..(START_COL + 10) } {
+        for col in unsafe { START_COL..(START_COL + 10).min(unsafe { C }) } {
             let col_idx = (col - unsafe { START_COL }) as usize;
             let col_letter = CellAddress::col_to_letters(col);
             let total_cell_width = col_widths[col_idx] + cell_padding;
@@ -1514,14 +1899,14 @@ impl Spreadsheet {
     
         
         // Draw grid rows
-        for row in unsafe { START_ROW..(START_ROW + 10) } {
+        for row in unsafe { START_ROW..(START_ROW + 10).min(unsafe { R }) } {
             // Row label - always in a fixed-width column
             stdout.execute(SetForegroundColor(Color::Cyan))?;
             write!(stdout, "{:>width$}", row + 1, width = row_label_width)?;
             stdout.execute(SetForegroundColor(Color::Reset))?;
             
             // Draw each cell in the row
-            for col in unsafe {START_COL..(START_COL + 10)} {
+            for col in unsafe {START_COL..(START_COL + 10).min(unsafe { C })} {
                 let col_idx = (col - unsafe { START_COL }) as usize;
                 let addr = CellAddress::new(col, row);
                 let is_cursor_cell = col == self.cursor.col && row == self.cursor.row;
@@ -1544,7 +1929,7 @@ impl Spreadsheet {
                 if cell_content.len() > available_width {
                     cell_content = format!("{}..", &cell_content[0..available_width.saturating_sub(2)]);
                 }
-                
+                // println!("Debug: addr {}", addr.to_string());
                 write!(stdout, " {:^width$}", self.format_cell_value(&addr), width = col_widths[col_idx])?;
                 
                 // Reset styling after cell
