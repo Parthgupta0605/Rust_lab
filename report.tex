@@ -1,0 +1,265 @@
+
+
+\documentclass[a4paper,12pt]{article}
+\usepackage[top=1in, bottom=1in, left=1in, right=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{enumitem}
+\usepackage{xcolor} % For color customization
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true, % Enables colored links
+    linkcolor=blue,  % Internal links color (e.g., Table of Contents)
+    citecolor=blue,  % Citation links color
+    filecolor=blue,  % File links color
+    urlcolor=blue    % URL links color
+}
+
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows}
+
+
+\title{Rust Lab Document\vspace{-1.5em } }
+% Reduces space below title
+\author{}
+
+\date{\today}
+
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+This document presents the design and implementation of the Hacker Spreadsheet—a text-based, Vim-inspired spreadsheet editor for terminal users. Aimed at keyboard-driven workflows and remote usage, it prioritizes speed, privacy, and minimalism.
+
+We outline the architecture, key design choices, challenges faced, and reasons why some proposed features couldn’t be completed. The document also explores possible future extensions and provides instructions for running the current version.
+\section{Implementation Challenges}
+\subsection{Undo/Redo Operations}
+While the codebase includes implementation for undo and redo operations, it was originally designed for single-cell operations. The function push\_undo() was set up to handle individual cell changes, but proved insufficient when handling batch operations.
+
+Later, a push\_undo\_sheet() function was implemented to handle multi-cell operations.\ Due to time constraints, the team couldn't properly integrate this function for all multi-cell operations, leading to inconsistent behavior when using undo/redo with features like sorting or multi-cell insertions.
+\subsection{Filter Functionality}
+The filter functionality was partially implemented but couldn't be completed. The main challenges were:
+\begin{itemize}
+    \item Displaying only filtered rows while maintaining the overall structure.
+    \item Creating an efficient mechanism to exit filter mode and restore the full view.
+\end{itemize}
+The team was able to implement the actual filtering logic but couldn't complete the user interface components necessary for a seamless experience within the time constraints.
+\section{Extra Extensions Implemented}
+\subsection{Horror Theme}
+An interesting extension implemented was a "haunted" mode that adds a horror theme to the spreadsheet. This feature is activated through a \textbf{:haunt} command in the spreadsheet in Normal Mode.
+
+The horror theme plays spooky sounds and displays unsettling messages and flickering during certain actions.
+
+\section{Primary Data Structures}
+\subsection{Cell Structure}
+Each cell in the spreadsheet stores user input, formatting, and evaluation results. It includes:
+\vspace{-3mm}
+\begin{itemize}
+    \item \textbf{Raw value}: The text or formula entered by the user
+\vspace{-3mm}
+
+\item \textbf{Display value}: The evaluated result shown on screen.
+\vspace{-3mm}
+\item \textbf{Formula}: Stores a formula reference if present, otherwise empty.
+\vspace{-3mm}
+\item \textbf{Lock status}: Indicates if the cell is editable.
+\vspace{-3mm}
+\item \textbf{Alignment}: Controls text alignment (left, center, right).
+\vspace{-3mm}
+\item \textbf{Width and height}: Define the cell’s display size.
+\vspace{-3mm}
+\end{itemize}
+
+\subsection{Spreadsheet Structure}
+The Spreadsheet struct manages the overall state and behavior of the application. It maintains:
+\begin{itemize}
+    \item 
+\vspace{-3mm}
+A mapping of cell addresses to Cell objects, representing the spreadsheet grid.
+\vspace{-3mm}
+\item The current cursor position and mode (e.g., normal, insert, command).
+\vspace{-3mm}
+\item Dimensions of the spreadsheet (max rows and columns).
+\vspace{-3mm}
+\item A command buffer and status message for user interaction.
+\vspace{-3mm}
+\item Undo/redo stacks to support reversible actions.
+\vspace{-3mm}
+\item Find-related data, including query matches and navigation.
+\vspace{-3mm}
+\item Dependency graphs to track formula relationships and enable reactive updates.
+\vspace{-3mm}
+\item Update tracking to avoid circular or redundant evaluations.
+\vspace{-3mm}
+\item Fields for haunt mode, enabling streaming interactions via audio or external feedback.
+\end{itemize}
+
+\vspace{-3mm}
+\subsection{Cell Addressing}
+The CellAddress struct handles the mapping between standard spreadsheet notation (like "A1") and the internal row-column index representation. It stores the column and row as numeric indices, enabling efficient lookup, navigation, and formula evaluation. This abstraction simplifies the conversion between user-facing cell references and internal data structures.
+\subsection{Dependency Tracking}
+To support automatic formula updates, the spreadsheet maintains two hash maps:
+\begin{itemize}
+    \item Dependencies: Tracks which cells a given cell depends on (i.e., inputs to its formula).
+    \item Dependents: Tracks which cells depend on a given cell (i.e., outputs affected by changes).
+\end{itemize}
+\section{ Interfaces Between Software Modules}
+
+\subsection{Formula Processing and Cell Updates}
+The interface between cell data and formula processing is handled through the update\_cell() method.
+This function serves as a critical interface, handling:
+\begin{itemize}
+    \item Cell value validation
+    \vspace{-3mm}
+\item Formula parsing and evaluation
+\vspace{-3mm}
+\item Dependency management
+\vspace{-3mm}
+\item Circular dependency detection
+\vspace{-3mm}
+\item Undo state management
+\vspace{-3mm}
+\end{itemize}
+\subsection{Dependency Management Interface}
+Methods like \texttt{add\_dependency()}, \texttt{remove\_dependencies()}, and \texttt{propagate\_changes()} form an interface for managing relationships between cells. This interface ensures that changes propagate correctly through the dependency graph. To maintain consistency and avoid circular updates, the system uses a topological sort algorithm implemented with a \textbf{stack-based} approach, ensuring that dependent cells are updated in the correct order.
+
+
+\subsection{File I/O Interface}
+
+The application supports saving and loading spreadsheet data using JSON. The \texttt{save\_json} method serializes the internal data structure and writes it to a file in a readable JSON format. The \texttt{load\_json} method reads from a JSON file and reconstructs the data, allowing users to persist and restore their work across sessions.
+
+
+
+\section{Design Evaluation}
+
+\subsection{Strengths of Design}
+\begin{itemize}[label={}]
+    
+    \item \textbf{Effective Use of Data Structures}
+    
+    The implementation makes excellent use of HashMaps and HashSets:
+
+\begin{enumerate}
+    \item HashMap\textless String, Cell\textgreater provides O(1) access to cells by their address
+    \item HashSet\textless String\textgreater efficiently stores and checks cell dependencies
+    \item VecDeque\textless UndoAction\textgreater effectively manages the undo/redo history with bounds
+\end{enumerate}
+    
+    \item \textbf{Modular Function Design}
+    
+    Functions are well-scoped with clear responsibilities:
+    \begin{itemize}
+        \item update\_cell() handles all cell modification logic
+\item propagate\_changes() manages dependency propagation
+\item parse\_range() encapsulates range parsing
+    \end{itemize}
+    \item \textbf{Strong Encapsulation} 
+
+    The design effectively encapsulates:
+    \begin{itemize}
+        \item Cell addressing complexity
+        \item Formula evaluation
+        \item Dependency tracking
+        \item Display formatting
+    \end{itemize}
+    \item \textbf{Practical Features}
+
+    The implementation includes practical spreadsheet features needed in daily use:
+\begin{itemize}
+    \item Formula evaluation with SUM, MIN, MAX, STDEV
+\item Cell locking for data protection
+\item Text alignment options
+\item Configurable cell dimensions
+\item Finding and navigation
+\item Sorting capabilities
+\end{itemize}
+    
+    
+\end{itemize}
+\section{Guide to Our Extension}
+
+This section outlines the custom extension we developed for the spreadsheet program, introducing interactive terminal-based functionality with several advanced features and commands.
+
+\subsection*{1. Overview}
+
+Upon invoking the \texttt{make ext1} command, a spreadsheet of size $100 \times 100$ is initialized within the terminal. The viewport is fixed to a $10 \times 10$ window, through which users can navigate and interact with the sheet.
+
+\subsection*{2. Navigation}
+
+Users can control the cursor using either of the following key bindings:
+\begin{itemize}[label={}]
+  \item \textbf{h, j, k, l}: Move left, down, up, and right respectively.
+  \item \textbf{w, a, s, d}: Shift the viewport in the respective direction.
+  \item \texttt{:j <cell>}: Jump directly to a specific cell (e.g., \texttt{:j A1}).
+  \item \texttt{:hh}, \texttt{:ll}: Move to the extreme left or right of the current row.
+  \item \texttt{:kk}, \texttt{:jj}: Move to the top or bottom of the current column.
+\end{itemize}
+
+\subsection*{3. Insert Mode}
+
+Pressing \texttt{:i} or \texttt{:i <cell>} enables insert mode. If no cell is specified, the currently selected cell is modified. An "Inserting..." prompt appears at the bottom right. Users can then:
+\begin{itemize}[label={}]
+  \item Enter values or strings (e.g., \texttt{2}, \texttt{abc}).
+  \item Use formulas (e.g., \texttt{=SUM(A1:B1)}, \texttt{=sqrt(A1)}, etc.).
+  \item Perform arithmetic operations (e.g., \texttt{=(A1+1)}).
+  \item Refer to other cells (e.g., \texttt{=(A1)}).
+\end{itemize}
+Exit insert mode using the \texttt{Esc} key.
+
+\subsection*{4. File Operations}
+
+\begin{itemize}[label={}]
+  \item \texttt{:load <path>}: Loads a JSON file into the spreadsheet.
+  \item \texttt{:saveas\_json <path>}: Saves the current sheet as a JSON file.
+  \item \texttt{:saveas\_pdf <path>}: Saves the sheet as a PDF document.
+\end{itemize}
+
+\subsection*{5. Batch Insertion and Search}
+
+\begin{itemize}[label={}]
+  \item \texttt{:mi [Range] <value>}: Inserts a value or formula across a specified range (e.g., \texttt{:mi [A1:B1] 2}, \texttt{:mi [A1:B1] =SUM(C1:D1)} ).
+  \item \texttt{:find <value>}: Highlights matches and displays the count. Use \texttt{n} and \texttt{p} to cycle through matches.
+\end{itemize}
+
+\subsection*{6. Sorting and Formatting}
+
+\begin{itemize}[label={}]
+  \item \texttt{:sort [Range] <flag>}: Sorts the given row range in ascending (1) or descending (0) order.
+  \item \texttt{:align <cell> (l/r/c)}: Aligns content in a specified cell or the current cell (left, right, center).
+  \item Cell sizes are fixed. Overflowing content is truncated with ellipsis (e.g., "alphabet" becomes "alp..").
+\end{itemize}
+
+\subsection*{7. Cell Dimensions and Locking}
+
+\begin{itemize}[label={}]
+  \item \texttt{:dim <cell> (h,w)}: Modifies the row and column dimensions of the specified or current cell.
+  \item \texttt{:lock <cell>}, \texttt{:unlock <cell>}: Locks or unlocks the specified or current cell.
+\end{itemize}
+
+\subsection*{8. Thematic Modes}
+
+As part of a theme-based extension system, we propose the integration of dynamic modes that enhance the user experience with visual and auditory effects. Currently, the first implemented theme is \textbf{Haunt Mode}, a playful and immersive feature designed for entertainment.
+
+\begin{itemize}[label={}]
+  \item \texttt{:haunt}: Activates haunt mode. For the best experience, users are advised to wear headphones at full volume.
+  \item Once activated, the sheet begins to flicker and display eerie or spooky messages at random intervals.
+  \item Typing in this mode triggers visual glitches, and occasional jump scares designed to surprise the user.
+  \item \texttt{:dehaunt}: Deactivates haunt mode and restores the interface to its normal state.
+\end{itemize}
+
+This mode demonstrates the flexibility of our extension framework, allowing for creative, theme-based user experiences that go beyond traditional spreadsheet functionality.
+
+\section{Conclusion}
+
+This document outlined the development of a feature-rich, terminal-based spreadsheet application. With support for advanced navigation, editing, formatting, and batch operations, the extension enhances both functionality and user experience.
+
+The introduction of theme-based modes, exemplified by Haunt Mode, demonstrates the system's flexibility and potential for creative expansion. Overall, this project combines practicality with interactivity, offering a solid foundation for future enhancements.
+
+\section{Links}
+Github Repo link: \href{https://github.com/PrishaBhoola/Rust_lab}{GitHub Repository}
+
+\end{document}
+
