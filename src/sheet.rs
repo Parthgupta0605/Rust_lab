@@ -369,6 +369,9 @@ pub fn sleep_seconds(seconds: u64) {
 }
 
 pub fn label_to_index(label: &str) -> Option<(usize, usize)> {
+    if label.is_empty() {
+        return None;
+    }
     if label.len() > 6 {
         return None;
     }
@@ -427,6 +430,9 @@ pub fn label_to_index(label: &str) -> Option<(usize, usize)> {
 }
 
 pub fn col_label_to_index(label: &str) -> Option<usize> {
+    if label.is_empty() {
+        return None;
+    }
     let mut index = 0;
     for ch in label.chars() {
         if !ch.is_ascii_uppercase() {

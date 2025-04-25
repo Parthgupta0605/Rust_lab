@@ -36,7 +36,7 @@ impl Cell {
             display_value: String::from("0"),
             formula: None,
             is_locked: false,
-            alignment: Alignment::Left,
+            alignment: Alignment::Center,
             width: 5,  // Default width
             height: 1, // Default height
         }
@@ -126,6 +126,18 @@ struct UndoAction {
     old_cell: Cell,
 }
 
+struct SheetSnapshot {
+    data: HashMap<String, Cell>,
+    dependencies: HashMap<String, HashSet<String>>,
+    dependents: HashMap<String, HashSet<String>>,
+}
+
+struct SheetAction {
+    cells: Vec<UndoAction>,  // Collection of all cell changes in this action
+}
+
+
+
 struct Spreadsheet {
     data: HashMap<String, Cell>,
     cursor: CellAddress,
@@ -141,6 +153,7 @@ struct Spreadsheet {
     find_query: String,
     dependents: HashMap<String, HashSet<String>>,  // Maps cell address to cells that depend on it
     dependencies: HashMap<String, HashSet<String>>,
+    currently_updating: HashSet<String>, // Tracks cells being updated to prevent cycles
 }
 
 impl Spreadsheet {
@@ -160,6 +173,7 @@ impl Spreadsheet {
             find_query: String::new(),
             dependents: HashMap::new(),
             dependencies: HashMap::new(),
+            currently_updating: HashSet::new(),
         };
         
         // Initialize cells
@@ -409,9 +423,19 @@ impl Spreadsheet {
         } else {
             return;
         }
-        
+        println!("DEBUG: Dependents to process: {:?}", dependents_to_process);
         // Now process each dependent
         for dependent in dependents_to_process {
+            // Check if the dependent is already being updated to avoid circular dependencies
+            if self.currently_updating.contains(&dependent) {
+                self.status_message = format!("ERROR: CIRCULAR DEPENDENCY DETECTED WITH {}", dependent);
+                println!("DEBUG: Undo stack: {:?}", self.undo_stack);
+                self.undo();
+                self.status_message = format!("ERROR: CIRCULAR DEPENDENCY DETECTED WITH {}", dependent);
+                return;
+            }
+
+
             // Get the formula if it exists
             let formula_opt = if let Some(cell) = self.data.get(&dependent) {
                 cell.formula.clone()
@@ -448,12 +472,25 @@ impl Spreadsheet {
             self.status_message = format!("ERROR: CELL {} LOCKED", addr.to_string());
             return false;
         }
+
+        let cell_addr_str = addr.to_string();
+        println!("DEBUG: Updating cell {} with value {}", cell_addr_str, value);
+        println!("DEBUG: Currently updating: {:?}", self.currently_updating);
+        // Check for circular dependency
+        if self.currently_updating.contains(&cell_addr_str) {
+            self.status_message = format!("ERROR: CIRCULAR DEPENDENCY DETECTED EARLY WITH {}", cell_addr_str);
+            return false;
+        }
+        
+        // Mark this cell as being updated
+        self.currently_updating.insert(cell_addr_str.clone());
+
         // println!("Debug: Updating cell {} with value {}", addr.to_string(), value);
         // Save the old cell for undo (clone it before modifying)
         if let Some(old_cell) = self.get_cell(addr).cloned() {
             // Push to undo stack and clear redo stack
-            self.push_undo(addr.clone(), old_cell);
-            self.redo_stack.clear();
+            // self.push_undo(addr.clone(), old_cell);
+            // self.redo_stack.clear();    
 
             let mut is_valid_formula = false;
             if value.starts_with("=") {
@@ -505,6 +542,8 @@ impl Spreadsheet {
                 };
             }
             else {
+                self.push_undo(addr.clone(), old_cell);
+                self.redo_stack.clear();
 
                 self.update_dependencies(&addr.to_string(), value);
 
@@ -516,9 +555,15 @@ impl Spreadsheet {
                 println!("DEBUG: propagating starting on {}", addr.to_string());
 
                 self.propagate_changes(&addr.to_string());
+                self.currently_updating.remove(&cell_addr_str);
+        println!("DEBUG: Finished updating cell {}", cell_addr_str);
                 return true;
             }
             if is_valid_formula {
+                // Save the old cell for undo (clone it before modifying)
+                self.push_undo(addr.clone(), old_cell);
+                self.redo_stack.clear();
+
                 let formula = &value[1..];
                 // self.remove_dependencies(&addr.to_string());
                 println!("DEBUG: Updating dependencies for cell {}", addr.to_string());
@@ -637,6 +682,7 @@ impl Spreadsheet {
                         0.0
                     }
                 } else if formula.starts_with("(") && formula.ends_with(")") {
+                    println!("DEBUG: Found cell reference in formula");
                     let cell_ref = &formula[1..formula.len() - 1];
                     if let Some(addr) = CellAddress::from_str(cell_ref) {
                         if let Some(cell) = self.get_cell(&addr) {
@@ -663,7 +709,10 @@ impl Spreadsheet {
                     cell.formula = Some(value[1..].to_string());
 
                 }
+                println!("DEBUG: propagating starting on {}", addr.to_string());
                 self.propagate_changes(&addr.to_string());
+                self.currently_updating.remove(&cell_addr_str);
+        println!("DEBUG: Finished updating cell {}", cell_addr_str);
                 return true;
             }
             else {
@@ -671,9 +720,10 @@ impl Spreadsheet {
                 self.status_message = format!("ERROR: INVALID FORMULA {}", value);
                 return false;
             }
-            return true;
         }
-        return false;
+        // Ensure removal from currently_updating set in all cases
+        
+        return true;
     }
             
             // Now update the cell (we're done with operations that need to borrow self)
@@ -732,7 +782,39 @@ impl Spreadsheet {
         
     //     false
     // }
-
+    fn push_undo_sheet(&mut self) {
+        // Create a copy of the entire sheet as individual cell actions
+        let mut sheet_action = SheetAction {
+            cells: Vec::new(),
+        };
+        
+        // Add all cells to the action
+        for (addr_str, cell) in &self.data {
+            if let Some(addr) = CellAddress::from_str(addr_str) {
+                sheet_action.cells.push(UndoAction {
+                    cell_address: addr,
+                    old_cell: cell.clone(),
+                });
+            }
+        }
+        
+        // Maintain max 3 undo steps
+        if self.undo_stack.len() >= 3 {
+            // Remove oldest actions
+            let actions_to_remove = sheet_action.cells.len();
+            for _ in 0..actions_to_remove {
+                if !self.undo_stack.is_empty() {
+                    self.undo_stack.pop_front();
+                }
+            }
+        }
+        
+        // Add all cells to the undo stack
+        for cell_action in sheet_action.cells {
+            self.undo_stack.push_back(cell_action);
+        }
+    }
+    
     fn push_undo(&mut self, addr: CellAddress, old_cell: Cell) {
         // Maintain max 3 undo steps
         if self.undo_stack.len() >= 3 {
@@ -858,6 +940,7 @@ impl Spreadsheet {
     }
 
     fn set_dimension(&mut self, addr: Option<&str>, height: Option<usize>, width: Option<usize>) -> bool {
+        println!("Debug: Setting dimension for cell {:?}", addr);
         let addr = if let Some(a) = addr {
             if let Some(cell_addr) = CellAddress::from_str(a) {
                 cell_addr
@@ -867,18 +950,20 @@ impl Spreadsheet {
         } else {
             self.cursor.clone()
         };
-        
+        println!("Debug: Address after parsing: {:?}", addr);
         if let Some(cell) = self.get_cell_mut(&addr) {
             if cell.is_locked {
                 self.status_message = format!("ERROR: CELL {} LOCKED", addr.to_string());
                 return false;
             }
-            
+            println!("Debug: Cell found: {:?}", cell);
             if let Some(h) = height {
+                println!("Debug: Setting height to {}", h);
                 cell.height = h;
             }
             
             if let Some(w) = width {
+                println!("Debug: Setting width to {}", w);
                 cell.width = w;
             }
             
@@ -1047,6 +1132,38 @@ impl Spreadsheet {
         }
     }
 
+    fn format_cell_value(&self, addr: &CellAddress) -> String {
+        let cell = self.get_cell(addr).clone().unwrap() else {
+            return String::new(); // Return empty string if cell not found
+        };
+        let width = cell.width;
+        let mut value = cell.display_value.clone();
+        if value.len() > width {
+            if width >= 3 {
+                value = format!("{}..", &value[..width - 2]);
+            } else {
+                value = ".".repeat(width); // Not enough space for any content
+            }
+        }
+        let padding = width.saturating_sub(value.len());
+        
+    
+        match cell.alignment {
+            Alignment::Left => format!("{:<width$}", value, width = width),
+            Alignment::Right => format!("{:>width$}", value, width = width),
+            Alignment::Center => {
+                let left = padding / 2;
+                let right = padding - left;
+                format!(
+                    "{}{}{}",
+                    " ".repeat(left),
+                    value,
+                    " ".repeat(right)
+                )
+            }
+        }
+    }
+
     fn process_command(&mut self) -> bool {
         // First, copy the command buffer to a local String to avoid borrowing issues
         let cmd = self.command_buffer.trim().to_string();
@@ -1161,7 +1278,7 @@ impl Spreadsheet {
                 } else {
                     None
                 };
-                
+                println!("Debug: Height: {:?}, Width: {:?}", height, width);
                 if parts.len() > 1 {
                     // Cell specified
                     if !self.set_dimension(Some(parts[1]), height, width) {
@@ -1353,9 +1470,32 @@ impl Spreadsheet {
         
         // Fixed widths for consistent display
         let row_label_width = 5;  // Width for row numbers column
-        let cell_width = 5;       // Width for each cell
         let cell_padding = 1;     // Space between cells
-        let total_cell_width = cell_width + cell_padding;
+        let default_cell_width = 5; // Default width if no attribute specified
+        
+        // Calculate max width for each column based on cell's width attribute
+        let mut col_widths = vec![default_cell_width; 10]; // Default width for each column
+        
+        // Calculate max width for each column
+        for col in unsafe { START_COL..(START_COL + 10) } { 
+            let col_idx = (col - unsafe { START_COL }) as usize;
+            
+            // Start with width needed for column header
+            let col_letter = CellAddress::col_to_letters(col);
+            col_widths[col_idx] = col_widths[col_idx].max(col_letter.len());
+            
+            // Check all cells in this column
+            for row in unsafe { START_ROW..(START_ROW + 10) } {
+                let addr = CellAddress::new(col, row);
+                if let Some(cell) = self.get_cell(&addr) {
+                    // Get cell width from attribute
+                    col_widths[col_idx] = col_widths[col_idx].max(cell.width);
+                }
+            }
+            
+            // Ensure minimum width
+            col_widths[col_idx] = col_widths[col_idx].max(3); // Minimum width of 3
+        }
         
         // Draw header row with column labels
         stdout.execute(SetForegroundColor(Color::Cyan))?;
@@ -1364,12 +1504,14 @@ impl Spreadsheet {
         
         // Column headers (A, B, C, etc.)
         for col in unsafe { START_COL..(START_COL + 10) } {
+            let col_idx = (col - unsafe { START_COL }) as usize;
             let col_letter = CellAddress::col_to_letters(col);
+            let total_cell_width = col_widths[col_idx] + cell_padding;
             write!(stdout, "{:^width$}", col_letter, width = total_cell_width)?;
         }
-
+    
         write!(stdout, "\r\n")?;
-
+    
         
         // Draw grid rows
         for row in unsafe { START_ROW..(START_ROW + 10) } {
@@ -1380,6 +1522,7 @@ impl Spreadsheet {
             
             // Draw each cell in the row
             for col in unsafe {START_COL..(START_COL + 10)} {
+                let col_idx = (col - unsafe { START_COL }) as usize;
                 let addr = CellAddress::new(col, row);
                 let is_cursor_cell = col == self.cursor.col && row == self.cursor.row;
                 
@@ -1390,26 +1533,31 @@ impl Spreadsheet {
                 }
                 
                 // Display cell content with consistent spacing
-                let cell_content = if let Some(cell) = self.get_cell(&addr) {
+                let mut cell_content = if let Some(cell) = self.get_cell(&addr) {
                     cell.display_value.clone()
                 } else {
                     "0".to_string()
                 };
                 
-                write!(stdout, " {:^width$}", cell_content, width = cell_width)?;
+                // Truncate content if it's too long for the column
+                let available_width = col_widths[col_idx];
+                if cell_content.len() > available_width {
+                    cell_content = format!("{}..", &cell_content[0..available_width.saturating_sub(2)]);
+                }
+                
+                write!(stdout, " {:^width$}", self.format_cell_value(&addr), width = col_widths[col_idx])?;
                 
                 // Reset styling after cell
                 if is_cursor_cell {
                     stdout.execute(SetForegroundColor(Color::Reset))?;
                     stdout.execute(style::SetBackgroundColor(Color::Reset))?;
                 }
-
             }
-            // stdout.execute(cursor::MoveTo((row+1).try_into().unwrap(),0))?;
+            
             write!(stdout, "\r\n")?;
-
         }
         
+        // Rest of the function remains the same
         // Status bar
         writeln!(stdout)?;
         
@@ -1444,8 +1592,6 @@ impl Spreadsheet {
             write!(stdout, "{}", command_buffer)?;
         }
         
-
-        // Rest of the status display code remains unchanged
         stdout.flush()?;
         
         Ok(())
